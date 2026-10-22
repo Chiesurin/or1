@@ -2827,6 +2827,94 @@ HTML_PAGE = """<!DOCTYPE html>
       flex-wrap: wrap;
       margin-bottom: 12px;
     }
+
+    /* Modern Toggle Switch & Card */
+    .toggle-card {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 6px 12px;
+      background: #ffffff;
+      border: 1.5px solid #cbd5e1;
+      border-radius: 8px;
+      cursor: pointer;
+      user-select: none;
+      transition: all 0.15s ease;
+      min-height: 38px;
+      box-sizing: border-box;
+    }
+    .toggle-card:hover {
+      background: #f8fafc;
+      border-color: #94a3b8;
+    }
+    .toggle-card.active,
+    .toggle-card:has(input:checked) {
+      background: #eff6ff;
+      border-color: #3b82f6;
+    }
+    .toggle-switch {
+      position: relative;
+      display: inline-block;
+      width: 36px;
+      height: 20px;
+      flex-shrink: 0;
+    }
+    .toggle-switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+      position: absolute;
+    }
+    .toggle-slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #cbd5e1;
+      transition: transform 0.2s ease, background-color 0.2s ease;
+      border-radius: 20px;
+    }
+    .toggle-slider:before {
+      position: absolute;
+      content: "";
+      height: 14px;
+      width: 14px;
+      left: 3px;
+      bottom: 3px;
+      background-color: white;
+      transition: transform 0.2s ease;
+      border-radius: 50%;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+    }
+    .toggle-switch input:checked + .toggle-slider {
+      background-color: #2563eb;
+    }
+    .toggle-switch input:checked + .toggle-slider:before {
+      transform: translateX(16px);
+    }
+    .toggle-content {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      line-height: 1.25;
+    }
+    .toggle-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: #1e293b;
+    }
+    .toggle-card.active .toggle-title,
+    .toggle-card:has(input:checked) .toggle-title {
+      color: #1d4ed8;
+    }
+    .toggle-desc {
+      font-size: 11px;
+      color: #64748b;
+      font-weight: 400;
+      margin-top: 1px;
+    }
   </style>
 </head>
 <body>
@@ -3073,9 +3161,14 @@ HTML_PAGE = """<!DOCTYPE html>
             <option value="example_standard.csv">example_standard.csv</option>
           </select>
           <button class="btn" onclick="solveCurrentCsv()">Solve This CSV</button>
-          <label style="display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; cursor: pointer; margin-left: 8px;">
-            <input type="checkbox" id="csv-force-twophase" checked>
-            Force Two-Phase Simplex
+          <label class="toggle-card active" for="csv-force-twophase" style="margin-left: 6px;">
+            <span class="toggle-switch">
+              <input type="checkbox" id="csv-force-twophase" checked onchange="this.closest('.toggle-card').classList.toggle('active', this.checked)">
+              <span class="toggle-slider"></span>
+            </span>
+            <span class="toggle-content">
+              <span class="toggle-title">Force Two-Phase Simplex</span>
+            </span>
           </label>
         </div>
 
@@ -3116,28 +3209,35 @@ HTML_PAGE = """<!DOCTYPE html>
           (including Two-Phase Phase 1 with artificial variables y1, y2, ... in yellow if &ge; or = constraints are present) and solve it with Bland's Rule.
         </p>
 
-        <div class="form-row">
-          <div class="form-group" style="min-width: 200px;">
+        <div class="form-row" style="align-items: flex-start;">
+          <div class="form-group" style="min-width: 190px;">
             <label style="font-weight: 600; font-size: 13px;">Optimization Goal:</label>
             <select id="manual-obj-type" class="select-input" disabled>
               <option value="min" selected>Minimization (MIN Z)</option>
             </select>
           </div>
 
-          <div class="form-group" style="min-width: 140px;">
+          <div class="form-group" style="width: 120px;">
             <label style="font-weight: 600; font-size: 13px;">Variables (n):</label>
             <input type="number" id="manual-n-vars" class="select-input" value="2" min="1" max="10" onchange="buildManualForm()">
           </div>
 
-          <div class="form-group" style="min-width: 140px;">
+          <div class="form-group" style="width: 120px;">
             <label style="font-weight: 600; font-size: 13px;">Constraints (m):</label>
             <input type="number" id="manual-n-constraints" class="select-input" value="3" min="1" max="15" onchange="buildManualForm()">
           </div>
 
-          <div class="form-group" style="justify-content: flex-end;">
-            <label style="display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13px; cursor: pointer; padding-bottom: 8px;">
-              <input type="checkbox" id="manual-force-twophase">
-              Force Two-Phase Simplex (y artificial basis for all constraints)
+          <div class="form-group" style="flex: 1; min-width: 290px;">
+            <label style="font-weight: 600; font-size: 13px;">Algorithm Mode:</label>
+            <label class="toggle-card" for="manual-force-twophase">
+              <span class="toggle-switch">
+                <input type="checkbox" id="manual-force-twophase" onchange="this.closest('.toggle-card').classList.toggle('active', this.checked)">
+                <span class="toggle-slider"></span>
+              </span>
+              <span class="toggle-content">
+                <span class="toggle-title">Force Two-Phase Simplex</span>
+                <span class="toggle-desc">Introduce artificial variables (y) for all constraints</span>
+              </span>
             </label>
           </div>
         </div>
