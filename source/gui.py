@@ -17,8 +17,8 @@ Interactive graphical solver for Linear Programming with:
 - Zero external dependencies (Python standard library only).
 
 Usage:
-  python3 gui.py
-  python3 gui.py tableau.csv --cli
+  python3 source/gui.py
+  python3 source/gui.py csv/tableau.csv --cli
 """
 
 import os
@@ -34,18 +34,79 @@ from typing import List, Tuple, Dict, Optional, Set
 import re
 import csv
 
+# Directory and Path Configuration for restructured folders (source/ and csv/)
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(SCRIPT_DIR) if os.path.basename(SCRIPT_DIR) == "source" else SCRIPT_DIR
+
+if os.path.isdir(os.path.join(PROJECT_ROOT, "csv")):
+    CSV_DIR = os.path.join(PROJECT_ROOT, "csv")
+elif os.path.isdir(os.path.join(SCRIPT_DIR, "csv")):
+    CSV_DIR = os.path.join(SCRIPT_DIR, "csv")
+else:
+    CSV_DIR = PROJECT_ROOT
+
+
+def resolve_csv_path(filename: str, for_writing: bool = False) -> str:
+    """Resolves a CSV filename or path to an absolute path across csv/ and project root."""
+    if not filename:
+        filename = "tableau.csv"
+
+    if os.path.isabs(filename):
+        return filename
+
+    # Check directly from current working directory
+    if os.path.exists(filename):
+        return os.path.abspath(filename)
+
+    # Check in CSV_DIR
+    in_csv_dir = os.path.join(CSV_DIR, filename)
+    if os.path.exists(in_csv_dir):
+        return in_csv_dir
+
+    base_in_csv = os.path.join(CSV_DIR, os.path.basename(filename))
+    if os.path.exists(base_in_csv):
+        return base_in_csv
+
+    # Check in PROJECT_ROOT
+    in_root = os.path.join(PROJECT_ROOT, filename)
+    if os.path.exists(in_root):
+        return in_root
+
+    base_in_root = os.path.join(PROJECT_ROOT, os.path.basename(filename))
+    if os.path.exists(base_in_root):
+        return base_in_root
+
+    # For saving new files, prefer CSV_DIR
+    if for_writing:
+        if os.path.isdir(CSV_DIR):
+            return os.path.join(CSV_DIR, os.path.basename(filename))
+        return os.path.join(PROJECT_ROOT, os.path.basename(filename))
+
+    return in_csv_dir if os.path.isdir(CSV_DIR) else filename
+
+
+def get_available_csv_files() -> List[str]:
+    """Finds all available CSV files in csv/ directory, project root, and cwd."""
+    found: Dict[str, str] = {}
+
+    search_dirs = [CSV_DIR, PROJECT_ROOT, os.getcwd()]
+    for d in search_dirs:
+        if os.path.isdir(d):
+            for path in sorted(glob.glob(os.path.join(d, "*.csv"))):
+                base = os.path.basename(path)
+                if base not in found:
+                    found[base] = path
+
+    file_list = sorted(list(found.keys()))
+    if "tableau.csv" in file_list:
+        file_list.remove("tableau.csv")
+        file_list.insert(0, "tableau.csv")
+    return file_list
+
+
 # =====================================================================
 # SIMPLEX ALGORITHM & LINEAR PROGRAM SOLVER ENGINE
 # =====================================================================
-
-
-import sys
-import os
-import csv
-import re
-import glob
-from fractions import Fraction
-from typing import List, Tuple, Dict, Optional
 
 
 def parse_fraction(val_str: str) -> Fraction:
@@ -1816,8 +1877,11 @@ def load_tableau_from_csv(file_path: str) -> Tuple[SimplexTableau, str]:
     - With or without an explicit 'z' column (z column is stripped automatically).
     - Automatic basic variable identification via unit columns if not specified in column 0.
     """
-    if not os.path.exists(file_path):
-        raise FileNotFoundError(f"File '{file_path}' not found in current folder.")
+    resolved_path = resolve_csv_path(file_path)
+    if os.path.exists(resolved_path):
+        file_path = resolved_path
+    elif not os.path.exists(file_path):
+        raise FileNotFoundError(f"File '{file_path}' not found (checked '{file_path}' and '{resolved_path}').")
 
     with open(file_path, "r", encoding="utf-8-sig") as f:
         lines = [line.strip() for line in f if line.strip() and not line.strip().startswith("#")]
@@ -3444,12 +3508,14 @@ HTML_PAGE = """<!DOCTYPE html>
       const nl = String.fromCharCode(10);
       const content = [editorHeaders.join(',')].concat(editorRows.map(r => r.join(','))).join(nl);
       try {
-        await fetch('/api/save-csv', {
+        const res = await fetch('/api/save-csv', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ filename, content })
         });
-        alert('File ' + filename + ' saved successfully!');
+        const data = await res.json();
+        alert(data.message || ('File ' + filename + ' saved successfully!'));
+        await reloadCsvList();
       } catch (e) {
         alert('Error saving file: ' + e);
       }
@@ -4188,17 +4254,18 @@ class SimplexGUIRequestHandler(BaseHTTPRequestHandler):
             return
 
         elif path == "/api/csv-files":
-            csv_files = sorted(glob.glob("*.csv"))
+            csv_files = get_available_csv_files()
             self.send_json(csv_files)
             return
 
         elif path == "/api/load-csv":
             filename = query.get("file", ["tableau.csv"])[0]
-            if not os.path.exists(filename):
+            filepath = resolve_csv_path(filename)
+            if not os.path.exists(filepath):
                 self.send_json({"error": f"File '{filename}' not found"}, status_code=404)
                 return
             try:
-                with open(filename, "r", encoding="utf-8-sig") as f:
+                with open(filepath, "r", encoding="utf-8-sig") as f:
                     lines = [line.strip() for line in f if line.strip() and not line.strip().startswith("#")]
                 if not lines:
                     self.send_json({"error": "Empty CSV file"}, status_code=400)
@@ -4228,11 +4295,12 @@ class SimplexGUIRequestHandler(BaseHTTPRequestHandler):
         elif path == "/api/solve-file":
             filename = query.get("file", ["tableau.csv"])[0]
             force_tp = query.get("force_two_phase", ["true"])[0].lower() != "false"
-            if not os.path.exists(filename):
+            filepath = resolve_csv_path(filename)
+            if not os.path.exists(filepath):
                 self.send_json({"error": f"File '{filename}' not found"}, status_code=404)
                 return
             try:
-                tab, detected_obj_type = load_tableau_from_csv(filename)
+                tab, detected_obj_type = load_tableau_from_csv(filepath)
                 if force_tp:
                     result = record_tableau_steps_twophase(tab, obj_type=detected_obj_type)
                 else:
@@ -4278,9 +4346,10 @@ class SimplexGUIRequestHandler(BaseHTTPRequestHandler):
             if path == "/api/save-csv":
                 filename = data.get("filename", "tableau.csv")
                 content = data.get("content", "")
-                with open(filename, "w", encoding="utf-8") as f:
+                filepath = resolve_csv_path(filename, for_writing=True)
+                with open(filepath, "w", encoding="utf-8") as f:
                     f.write(content)
-                self.send_json({"success": True, "message": f"Saved '{filename}'"})
+                self.send_json({"success": True, "message": f"Saved '{os.path.basename(filepath)}'"})
                 return
 
             elif path == "/api/solve-tableau":
@@ -4386,9 +4455,11 @@ def run_gui(port: int = 5050):
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1].endswith(".csv") and "--cli" in sys.argv:
         csv_file = sys.argv[1]
-        print(f"Loading tableau from '{csv_file}'...")
+        resolved = resolve_csv_path(csv_file)
+        display_path = resolved if os.path.exists(resolved) else csv_file
+        print(f"Loading tableau from '{display_path}'...")
         try:
-            tab, obj_type = load_tableau_from_csv(csv_file)
+            tab, obj_type = load_tableau_from_csv(resolved)
             solve_imported_tableau(tab, obj_type)
         except Exception as e:
             print(f"[!] Error loading CSV file '{csv_file}': {e}")
