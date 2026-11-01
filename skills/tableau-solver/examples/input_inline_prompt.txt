@@ -1,0 +1,18 @@
+Example Prompt with Inline Tableau:
+
+"Please solve this tableau using Bland's rule and show every iteration with calculations:
+
+Basis,RHS,x1,x2,x3,x4,x5
+-z,0,-3,-5,0,0,0
+x3,4,1,0,1,0,0
+x4,12,0,2,0,1,0
+x5,18,3,2,0,0,1
+
+Also generate a markdown file solution.md with the solution."
+
+Expected agent action:
+python3 skills/tableau-solver/scripts/solve_tableau.py --raw "Basis,RHS,x1,x2,x3,x4,x5
+-z,0,-3,-5,0,0,0
+x3,4,1,0,1,0,0
+x4,12,0,2,0,1,0
+x5,18,3,2,0,0,1" --output-md solution.md

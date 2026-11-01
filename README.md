@@ -24,12 +24,22 @@ Includes both a **Terminal CLI** and a modern, responsive, dependency-free **Web
 
 ```
 .
+├── .agents/
+│   └── skills/
+│       └── tableau-solver -> ../../skills/tableau-solver  # Antigravity auto-discovered skill
 ├── .gitignore              # Ignores .DS_Store, __pycache__, bytecode
 ├── LICENSE                 # Project license
 ├── README.md               # Complete documentation and AI reference guide
 ├── csv/                    # Simplex initial tableau CSV files
 │   ├── example_standard.csv # Standard 2D textbook LP problem
 │   └── tableau.csv         # Beale's classic cycling problem (1955)
+├── skills/                 # AI / LLM Agent Skills
+│   └── tableau-solver/     # Modular tableau solver skill for AI agents
+│       ├── SKILL.md        # Agent instruction runbook & prompt interface
+│       ├── scripts/
+│       │   └── solve_tableau.py # Standalone solver & calculation engine
+│       ├── examples/       # Sample tableaus, prompts, and solution markdown
+│       └── references/     # Mathematical derivations and input specifications
 └── source/                 # Python source files
     └── gui.py              # Core solver engine, REST API, CLI, and Web GUI
 ```
@@ -241,6 +251,41 @@ lp_result = gui.record_lp_steps(lp)
 print("LP Optimal Status:", lp_result["status"])
 print("LP Min z*:", lp_result["final_solution"]["obj_val"]) # -36
 ```
+
+---
+
+## 🤖 LLM Agent Skill (`skills/tableau-solver/`)
+
+The repository includes a dedicated **Skill** designed for LLMs and AI Agents (compatible with Antigravity and custom agent runners) to solve tableaux without doing mental arithmetic or calling external LLM APIs.
+
+### Skill Highlights:
+- **Zero LLM API Needed**: Calculations are executed entirely by the local Python runtime using exact rational arithmetic (`fractions.Fraction`).
+- **Step-by-Step Mathematical Walkthrough**: Reports every single iteration with:
+  - Entering variable ($c_j < 0$, Bland's rule)
+  - Minimum ratio test table ($\theta = \text{RHS}_i / a_{ij}$)
+  - Leaving variable and pivot element $(p, q)$
+  - Elementary row operations ($R_p \leftarrow \frac{1}{a_{pq}} R_p$, $R_i \leftarrow R_i - a_{iq} R_p$)
+  - Resulting intermediate and optimal tableaux
+- **Markdown Solution Export**: Generates a self-contained, publication-grade `.md` report using the `--output-md <file.md>` flag.
+- **Multiple Input Modes**: Accepts CSV files, raw tableau text passed inline from the prompt, standard input, or algebraic LP formulations.
+
+### Usage:
+
+```bash
+# 1. From a CSV file (auto-searches csv/ and project folders):
+python3 skills/tableau-solver/scripts/solve_tableau.py --csv tableau.csv
+
+# 2. From raw tableau text passed directly in the prompt:
+python3 skills/tableau-solver/scripts/solve_tableau.py --raw "Basis,RHS,x1,x2\n-z,0,-3,-5\nx3,4,1,0\nx4,12,0,2\nx5,18,3,2"
+
+# 3. From standard LP formulation text:
+python3 skills/tableau-solver/scripts/solve_tableau.py --lp "min 4*x1 + x2 s.t. 3*x1 + x2 = 3; 4*x1 + 3*x2 >= 6; x1 + 2*x2 <= 4; x1, x2 >= 0"
+
+# 4. Generate a comprehensive solution Markdown file (.md):
+python3 skills/tableau-solver/scripts/solve_tableau.py --csv tableau.csv --output-md solution.md
+```
+
+See [skills/tableau-solver/SKILL.md](skills/tableau-solver/SKILL.md) for the full agent specification and runbook.
 
 ---
 
