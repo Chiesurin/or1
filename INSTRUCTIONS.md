@@ -144,9 +144,6 @@ When constraints include $\ge$, $=$, or negative RHS values:
 
 ```text
 .
-├── CLAUDE.md                 # Configuration for Claude Code assistant
-├── AGENTS.md                 # Universal configuration for Codex & open agents
-├── .cursorrules              # Configuration for Cursor AI editor
 ├── INSTRUCTIONS.md           # This guide (for human users)
 ├── README.md                 # Technical specification & API documentation
 ├── LICENSE                   # Open-source MIT license

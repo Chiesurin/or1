@@ -27,10 +27,7 @@ Includes both a **Terminal CLI** and a modern, responsive, dependency-free **Web
 ├── .agents/
 │   └── skills/
 │       └── tableau-solver -> ../../skills/tableau-solver  # Antigravity auto-discovered skill
-├── .cursorrules              # Cursor AI editor configuration
 ├── .gitignore              # Ignores .DS_Store, __pycache__, bytecode
-├── AGENTS.md               # Universal instructions for Codex, Copilot & open agents
-├── CLAUDE.md               # Directives & runbook for Claude Code assistant
 ├── INSTRUCTIONS.md         # Comprehensive human guide (in English)
 ├── LICENSE                 # Project license (MIT)
 ├── README.md               # Complete documentation and AI reference guide
