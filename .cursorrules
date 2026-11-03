@@ -1,0 +1,11 @@
+# Cursor Rules for OR1 Simplex Tableau Solver
+
+- This repository is a Linear Programming and Simplex Tableau solver written in pure Python (standard library only).
+- Do not introduce external pip dependencies (e.g., numpy, scipy, pulp, flask) unless explicitly requested by the user. The codebase must remain 100% executable with vanilla Python 3.
+- When asked to solve Simplex tableaus or explain iterations, execute `python3 skills/tableau-solver/scripts/solve_tableau.py` via terminal to compute exact fractions rather than doing mental matrix math.
+- Key conventions:
+  - Universal minimization: min z
+  - Row 0 equation: -z = RHS_0 => optimal z* = -RHS_0
+  - Bland's smallest-subscript rule for entering and leaving variable ties.
+- Full agent runbook is located at `skills/tableau-solver/SKILL.md`.
+- Human guide is located at `INSTRUCTIONS.md`.

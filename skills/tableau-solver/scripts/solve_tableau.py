@@ -1009,7 +1009,7 @@ def generate_markdown_report(result: Dict[str, Any], title: str = "Simplex Table
     # SciPy Integration Section in Markdown
     scipy_info = result.get("scipy")
     if scipy_info:
-        lines.append("## 🔬 Python Library Integration (SciPy `scipy.optimize.linprog`)")
+        lines.append("## Python Library Integration (SciPy `scipy.optimize.linprog`)")
         lines.append("")
         if scipy_info.get("installed"):
             lines.append(f"- **Library Version**: SciPy v{scipy_info.get('version')}")

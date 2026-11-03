@@ -150,7 +150,7 @@
 | `x5` | Non-Basic | $0$ |
 
 
-## 🔬 Python Library Integration (SciPy `scipy.optimize.linprog`)
+## Python Library Integration (SciPy `scipy.optimize.linprog`)
 
 > [!NOTE]
 > **SciPy Library Status**: SciPy is not installed in the active Python environment.

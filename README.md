@@ -6,7 +6,7 @@ Includes both a **Terminal CLI** and a modern, responsive, dependency-free **Web
 
 ---
 
-## 🤖 AI / Agent Quick Reference Summary
+## AI / Agent Quick Reference Summary
 
 > **Context for AI Agents & Automated Tools:**
 > - **Language & Runtime:** Python 3 (3.8+). Zero external third-party dependencies (`pip install` not required; uses only standard library: `fractions`, `http.server`, `urllib`, `json`, `csv`, `glob`, `socket`, `webbrowser`).
@@ -20,15 +20,19 @@ Includes both a **Terminal CLI** and a modern, responsive, dependency-free **Web
 
 ---
 
-## 📁 Repository Structure
+## Repository Structure
 
 ```
 .
 ├── .agents/
 │   └── skills/
 │       └── tableau-solver -> ../../skills/tableau-solver  # Antigravity auto-discovered skill
+├── .cursorrules              # Cursor AI editor configuration
 ├── .gitignore              # Ignores .DS_Store, __pycache__, bytecode
-├── LICENSE                 # Project license
+├── AGENTS.md               # Universal instructions for Codex, Copilot & open agents
+├── CLAUDE.md               # Directives & runbook for Claude Code assistant
+├── INSTRUCTIONS.md         # Comprehensive human guide (in English)
+├── LICENSE                 # Project license (MIT)
 ├── README.md               # Complete documentation and AI reference guide
 ├── csv/                    # Simplex initial tableau CSV files
 │   ├── example_standard.csv # Standard 2D textbook LP problem
@@ -46,7 +50,7 @@ Includes both a **Terminal CLI** and a modern, responsive, dependency-free **Web
 
 ---
 
-## 📐 Mathematical Formulation & Conventions
+## Mathematical Formulation & Conventions
 
 ### 1. Optimization Goal (Universal Minimization)
 All problems are formulated in standard minimization form:
@@ -111,7 +115,7 @@ When constraints contain $\ge$ or $=$ relations (or when `--force-two-phase` is 
 
 ---
 
-## 📊 CSV Tableau Format & Specifications
+## CSV Tableau Format & Specifications
 
 CSV files stored in [`csv/`](csv/) represent initial tableaus.
 
@@ -137,7 +141,7 @@ x7,1,1,0,0,0,0,0,1
 
 ---
 
-## 🚀 Execution & Usage
+## Execution & Usage
 
 ### 1. Launch Interactive Web GUI
 Run from repository root:
@@ -166,7 +170,7 @@ python3 source/gui.py example_standard.csv --cli
 
 ---
 
-## 🌐 Embedded REST API Reference
+## Embedded REST API Reference
 
 When `source/gui.py` runs, it exposes a lightweight JSON HTTP API. This allows AI subagents, headless scripts, or automated tests to interact with the solver programmatically without a browser.
 
@@ -218,7 +222,7 @@ Each item in `steps` represents an elementary sub-step:
 
 ---
 
-## 🐍 Programmatic Python API
+## Programmatic Python API
 
 Any script or test can import and use the engine directly without network overhead:
 
@@ -254,7 +258,7 @@ print("LP Min z*:", lp_result["final_solution"]["obj_val"]) # -36
 
 ---
 
-## 🤖 LLM Agent Skill (`skills/tableau-solver/`)
+## LLM Agent Skill (`skills/tableau-solver/`)
 
 The repository includes a dedicated **Skill** designed for LLMs and AI Agents (compatible with Antigravity and custom agent runners) to solve tableaux without doing mental arithmetic or calling external LLM APIs.
 
@@ -289,7 +293,7 @@ See [skills/tableau-solver/SKILL.md](skills/tableau-solver/SKILL.md) for the ful
 
 ---
 
-## 🏆 Reference Benchmark Verification Cases
+## Reference Benchmark Verification Cases
 
 ### 1. Beale's Cycling Benchmark (1955)
 - **Problem**:
@@ -319,6 +323,6 @@ See [skills/tableau-solver/SKILL.md](skills/tableau-solver/SKILL.md) for the ful
 
 ---
 
-## 📜 License
+## License
 
 MIT License. See [LICENSE](LICENSE) for full text.
