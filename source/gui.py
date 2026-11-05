@@ -30,7 +30,7 @@ import urllib.parse
 import webbrowser
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from fractions import Fraction
-from typing import List, Tuple, Dict, Optional, Set
+from typing import List, Tuple, Dict, Optional, Set, Any
 import re
 import csv
 
@@ -154,12 +154,14 @@ class SimplexTableau:
     x1, x2, ..., xn, s1, s2, ..., e1, ..., y1, ...
     """
     def __init__(self, var_names: List[str], var_indices: Dict[str, int],
-                 tableau: List[List[Fraction]], basic_vars: List[str], obj_name: str = "-z"):
+                 tableau: List[List[Fraction]], basic_vars: List[str], obj_name: str = "-z",
+                 orig_row0: Optional[List[Fraction]] = None):
         self.var_names = list(var_names)
         self.var_indices = dict(var_indices)
         self.tableau = [list(row) for row in tableau]
         self.basic_vars = list(basic_vars)
         self.obj_name = obj_name
+        self.orig_row0 = list(orig_row0) if orig_row0 is not None else [Fraction(x) for x in tableau[0]]
 
     def num_rows(self) -> int:
         return len(self.tableau)
@@ -579,7 +581,8 @@ def record_simplex_steps(
         initial_tableau.var_indices,
         initial_tableau.tableau,
         initial_tableau.basic_vars,
-        initial_tableau.obj_name
+        initial_tableau.obj_name,
+        orig_row0=getattr(initial_tableau, "orig_row0", None)
     )
 
     steps: List[Dict] = []
@@ -837,6 +840,206 @@ def record_simplex_steps(
     return "ITERATION_LIMIT", steps, tab
 
 
+# ---------------------------------------------------------------------
+# SCIPY INTEGRATION & CORRECTNESS VERIFICATION
+# ---------------------------------------------------------------------
+
+def solve_with_scipy(tab: Optional[SimplexTableau] = None, lp: Optional['LinearProgram'] = None, obj_type: str = "min") -> Dict[str, Any]:
+    """
+    Executes linear programming via SciPy (scipy.optimize.linprog)
+    and returns a structured result dictionary.
+    """
+    try:
+        import scipy
+        from scipy.optimize import linprog
+        import numpy as np
+    except ImportError:
+        return {
+            "installed": False,
+            "message": "SciPy is not installed in the active Python environment.",
+            "install_guide": "pip3 install --user scipy numpy"
+        }
+
+    try:
+        if lp is not None:
+            c = [float(val) if lp.obj_type == "min" else -float(val) for val in lp.obj_coeffs]
+            A_ub, b_ub, A_eq, b_eq = [], [], [], []
+            for coeffs, rel, rhs in lp.constraints:
+                c_float = [float(v) for v in coeffs]
+                r_float = float(rhs)
+                if rel == "<=":
+                    A_ub.append(c_float)
+                    b_ub.append(r_float)
+                elif rel == ">=":
+                    A_ub.append([-v for v in c_float])
+                    b_ub.append(-r_float)
+                elif rel == "=":
+                    A_eq.append(c_float)
+                    b_eq.append(r_float)
+
+            res = linprog(
+                c=c,
+                A_ub=A_ub if A_ub else None,
+                b_ub=b_ub if b_ub else None,
+                A_eq=A_eq if A_eq else None,
+                b_eq=b_eq if b_eq else None,
+                bounds=(0, None),
+                method="highs"
+            )
+            var_names = lp.var_names
+            raw_rhs_0 = 0.0
+        elif tab is not None:
+            n_vars = tab.num_cols()
+            if getattr(tab, "orig_row0", None) is not None:
+                c = [float(tab.orig_row0[j]) for j in range(n_vars)]
+            else:
+                c = [float(tab.tableau[0][j]) for j in range(n_vars)]
+
+            A_eq = [[float(tab.tableau[i][j]) for j in range(n_vars)] for i in range(1, tab.num_rows())]
+            b_eq = [float(tab.tableau[i][-1]) for i in range(1, tab.num_rows())]
+            raw_rhs_0 = float(tab.tableau[0][-1])
+
+            res = linprog(
+                c=c,
+                A_eq=A_eq,
+                b_eq=b_eq,
+                bounds=(0, None),
+                method="highs"
+            )
+            var_names = tab.var_names
+        else:
+            return {"installed": True, "error": "No tableau or LP provided."}
+
+        sol_dict = {}
+        if res.x is not None:
+            for idx, name in enumerate(var_names):
+                if idx < len(res.x):
+                    sol_dict[name] = round(float(res.x[idx]), 6)
+
+        calc_fun = float(res.fun) if res.fun is not None else None
+        if lp is None and calc_fun is not None and raw_rhs_0 != 0 and getattr(tab, "orig_row0", None) is None:
+            calc_fun = calc_fun - raw_rhs_0
+
+        return {
+            "installed": True,
+            "version": scipy.__version__,
+            "success": res.success,
+            "status_code": res.status,
+            "message": res.message,
+            "fun": calc_fun,
+            "nit": int(res.nit),
+            "x": sol_dict,
+            "method": "scipy.optimize.linprog (method='highs')"
+        }
+    except Exception as ex:
+        return {
+            "installed": True,
+            "error": str(ex)
+        }
+
+
+def check_correctness(tab: Optional[SimplexTableau], result: Dict[str, Any], lp: Optional['LinearProgram'] = None, obj_type: str = "min") -> Dict[str, Any]:
+    """Compares the custom Simplex solution against SciPy linprog output for correctness."""
+    scipy_info = result.get("scipy")
+    if not scipy_info:
+        scipy_info = solve_with_scipy(tab=tab, lp=lp, obj_type=obj_type)
+        result["scipy"] = scipy_info
+
+    if not scipy_info.get("installed"):
+        return {
+            "status": "SKIPPED",
+            "installed": False,
+            "verified": False,
+            "message": "SciPy is not installed in the environment. Verification skipped.",
+            "install_guide": scipy_info.get("install_guide", "pip3 install --user scipy numpy")
+        }
+
+    if "error" in scipy_info:
+        return {
+            "status": "ERROR",
+            "installed": True,
+            "verified": False,
+            "message": f"SciPy solver error: {scipy_info['error']}"
+        }
+
+    status = result.get("status")
+    fs = result.get("final_solution")
+
+    if status == "OPTIMAL" and scipy_info.get("success"):
+        try:
+            our_opt_val = None
+            if fs:
+                if "raw_obj_val" in fs:
+                    our_opt_val = float(parse_fraction(str(fs["raw_obj_val"])))
+                elif "obj_val" in fs:
+                    clean_str = re.sub(r'\(.*?\)', '', str(fs["obj_val"])).strip()
+                    our_opt_val = float(parse_fraction(clean_str))
+
+            scipy_opt_val = scipy_info.get("fun")
+
+            if our_opt_val is not None and scipy_opt_val is not None:
+                diff = abs(our_opt_val - scipy_opt_val)
+                match = (diff < 1e-4)
+
+                var_diffs = {}
+                if fs and "solution_vector" in fs and scipy_info.get("x"):
+                    for v_name, val_str in fs["solution_vector"].items():
+                        if v_name in scipy_info["x"]:
+                            our_v = float(parse_fraction(str(val_str)))
+                            sci_v = float(scipy_info["x"][v_name])
+                            v_diff = abs(our_v - sci_v)
+                            var_diffs[v_name] = {
+                                "simplex": our_v,
+                                "scipy": sci_v,
+                                "diff": v_diff,
+                                "match": (v_diff < 1e-4)
+                            }
+
+                return {
+                    "status": "PASSED" if match else "DISCREPANCY",
+                    "installed": True,
+                    "verified": match,
+                    "difference": diff,
+                    "our_optimal": our_opt_val,
+                    "scipy_optimal": scipy_opt_val,
+                    "message": f"MATCH CONFIRMED: Simplex Engine ({our_opt_val:.6g}) == SciPy ({scipy_opt_val:.6g})" if match else f"DISCREPANCY: Simplex Engine ({our_opt_val}) != SciPy ({scipy_opt_val})",
+                    "variable_checks": var_diffs,
+                    "scipy_version": scipy_info.get("version"),
+                    "scipy_iterations": scipy_info.get("nit")
+                }
+        except Exception as ex:
+            return {
+                "status": "ERROR",
+                "installed": True,
+                "verified": False,
+                "message": f"Verification calculation error: {ex}"
+            }
+
+    elif status == "UNBOUNDED" and not scipy_info.get("success") and scipy_info.get("status_code") == 3:
+        return {
+            "status": "PASSED",
+            "installed": True,
+            "verified": True,
+            "message": "MATCH CONFIRMED: Both Simplex and SciPy report the problem is Unbounded.",
+            "scipy_version": scipy_info.get("version")
+        }
+    elif status == "INFEASIBLE" and not scipy_info.get("success") and scipy_info.get("status_code") == 2:
+        return {
+            "status": "PASSED",
+            "installed": True,
+            "verified": True,
+            "message": "MATCH CONFIRMED: Both Simplex and SciPy report the problem is Infeasible.",
+            "scipy_version": scipy_info.get("version")
+        }
+    else:
+        return {
+            "status": "UNKNOWN",
+            "installed": True,
+            "verified": False,
+            "message": f"Simplex status: {status}, SciPy message: {scipy_info.get('message')}"
+        }
+
+
 def record_tableau_steps(tab: SimplexTableau, obj_type: str = "min") -> Dict:
     """Solves a tableau and returns complete trajectory and final solution data for GUI."""
     status, steps, final_tab = record_simplex_steps(tab, obj_type=obj_type)
@@ -868,6 +1071,9 @@ def record_tableau_steps(tab: SimplexTableau, obj_type: str = "min") -> Dict:
             "basic_vars": list(final_tab.basic_vars),
             "alternative_optima": alt_optima
         }
+
+    result["scipy"] = solve_with_scipy(tab, obj_type=obj_type)
+    result["correctness"] = check_correctness(tab, result, obj_type=obj_type)
     return result
 
 
@@ -1056,6 +1262,8 @@ def record_tableau_steps_twophase(tab: SimplexTableau, obj_type: str = "min") ->
             "alternative_optima": alt_optima
         }
 
+    result["scipy"] = solve_with_scipy(tab, obj_type=orig_obj_type)
+    result["correctness"] = check_correctness(tab, result, obj_type=orig_obj_type)
     return result
 
 
@@ -1282,6 +1490,8 @@ def record_lp_steps(lp: 'LinearProgram') -> Dict:
             "alternative_optima": alt_optima
         }
 
+    result["scipy"] = solve_with_scipy(lp=lp, obj_type=lp.obj_type)
+    result["correctness"] = check_correctness(None, result, lp=lp, obj_type=lp.obj_type)
     return result
 
 
@@ -2053,6 +2263,25 @@ def solve_imported_tableau(tab: SimplexTableau, obj_type: str = "min", force_two
             print(f" • Solution Vector:")
             for k, v in fs['solution_vector'].items():
                 print(f"    {k:<5} = {v}")
+
+        corr = result.get('correctness', {})
+        sci = result.get('scipy', {})
+        print("\n" + "=" * 82)
+        print(" PYTHON LIBRARY (SciPy linprog) CORRECTNESS CHECK".center(82))
+        print("=" * 82)
+        if sci.get("installed"):
+            print(f" SciPy Version: v{sci.get('version')}")
+            print(f" Solver Method: {sci.get('method')}")
+            print(f" Status Message: {sci.get('message')} (Code {sci.get('status_code')})")
+            print(f" SciPy Iterations: {sci.get('nit')}")
+            if sci.get("fun") is not None:
+                print(f" SciPy Optimal Value (Min z*): {sci.get('fun')}")
+            print(f"\n [{corr.get('status', 'VERIFIED')}] {corr.get('message', '')}")
+        else:
+            print(f" [!] {sci.get('message', 'SciPy is not installed.')}")
+            print(" To install SciPy in your Python environment, run:")
+            print(f"   {sci.get('install_guide', 'pip3 install --user scipy numpy')}")
+        print("=" * 82 + "\n")
         return
 
     status, final_tab = solve_simplex(tab, obj_type=obj_type)
@@ -2092,6 +2321,26 @@ def solve_imported_tableau(tab: SimplexTableau, obj_type: str = "min", force_two
         if alt_candidates:
             print(f"\n • Note: Non-basic variable(s) {alt_candidates} have reduced cost = 0.")
             print("   Alternative optimal solutions exist!")
+
+        res_obj = {"status": status, "final_solution": {"raw_obj_val": opt_z, "solution_vector": sol_dict}}
+        corr = check_correctness(tab, res_obj, obj_type=obj_type)
+        sci = res_obj.get("scipy", {})
+        print("\n" + "=" * 82)
+        print(" PYTHON LIBRARY (SciPy linprog) CORRECTNESS CHECK".center(82))
+        print("=" * 82)
+        if sci.get("installed"):
+            print(f" SciPy Version: v{sci.get('version')}")
+            print(f" Solver Method: {sci.get('method')}")
+            print(f" Status Message: {sci.get('message')} (Code {sci.get('status_code')})")
+            print(f" SciPy Iterations: {sci.get('nit')}")
+            if sci.get("fun") is not None:
+                print(f" SciPy Optimal Value (Min z*): {sci.get('fun')}")
+            print(f"\n [{corr.get('status', 'VERIFIED')}] {corr.get('message', '')}")
+        else:
+            print(f" [!] {sci.get('message', 'SciPy is not installed.')}")
+            print(" To install SciPy in your Python environment, run:")
+            print(f"   {sci.get('install_guide', 'pip3 install --user scipy numpy')}")
+        print("=" * 82 + "\n")
     elif status == "UNBOUNDED":
         print(" [STATUS] THE LINEAR PROGRAM IS UNBOUNDED!")
         print(" Objective function can improve indefinitely without violating constraints.")
@@ -3202,6 +3451,7 @@ HTML_PAGE = """<!DOCTYPE html>
         <div id="final-result-card" class="result-banner" style="display: none;">
           <h3>Optimal Solution Reached!</h3>
           <div id="final-result-body" style="font-size: 14px;"></div>
+          <div id="correctness-card" style="margin-top: 14px;"></div>
         </div>
 
       </div>
@@ -3359,6 +3609,7 @@ HTML_PAGE = """<!DOCTYPE html>
 
   <script>
     let stepsData = [];
+    let currentSolutionData = null;
     let currentStepIdx = 0;
     let playInterval = null;
     let editorHeaders = [];
@@ -3584,6 +3835,7 @@ HTML_PAGE = """<!DOCTYPE html>
         alert('No solution steps were returned.');
         return;
       }
+      currentSolutionData = data;
       stepsData = data.steps;
       currentStepIdx = 0;
       renderCurrentStep();
@@ -3932,6 +4184,7 @@ HTML_PAGE = """<!DOCTYPE html>
         }
         reportHtml += `<div>Optimal Basic Variables: ${basicPairs.join(', ') || 'None'}</div>`;
         body.innerHTML = reportHtml;
+        renderCorrectness(currentSolutionData);
 
       } else if (step.status === 'UNBOUNDED') {
         enteringDiv.innerHTML = `<span class="badge badge-red">Unbounded Problem</span><p style="margin-top: 8px;">${step.message}</p>`;
@@ -4014,6 +4267,69 @@ HTML_PAGE = """<!DOCTYPE html>
           pivHtml += `<div style="font-size: 12px; color: #475569;">${step.substep_desc}</div>`;
         }
         pivotDiv.innerHTML = pivHtml;
+      }
+    }
+
+    function renderCorrectness(data) {
+      const card = document.getElementById('correctness-card');
+      if (!card) return;
+      if (!data || !data.correctness) {
+        card.innerHTML = '';
+        return;
+      }
+      const corr = data.correctness;
+      const sci = data.scipy || {};
+
+      if (corr.status === 'PASSED') {
+        let varList = '';
+        if (corr.variable_checks && Object.keys(corr.variable_checks).length > 0) {
+          const rows = Object.entries(corr.variable_checks).map(([k, v]) =>
+            `<tr><td style="padding: 2px 8px;"><code>${k}</code></td><td style="padding: 2px 8px;">${v.simplex}</td><td style="padding: 2px 8px;">${v.scipy}</td><td style="padding: 2px 8px; color: #16a34a; font-weight: 600;">Match</td></tr>`
+          ).join('');
+          varList = `<details style="margin-top: 8px;"><summary style="cursor: pointer; font-size: 12px; color: #15803d; font-weight: 600;">View Variable-by-Variable Comparison</summary><table style="margin-top: 6px; font-size: 12px; border-collapse: collapse; width: 100%; background: white; border-radius: 4px; border: 1px solid #bbf7d0;"><tr style="background: #f0fdf4; font-weight: 600;"><th style="padding: 4px 8px; text-align: left;">Var</th><th style="padding: 4px 8px; text-align: left;">Simplex</th><th style="padding: 4px 8px; text-align: left;">SciPy</th><th style="padding: 4px 8px; text-align: left;">Status</th></tr>${rows}</table></details>`;
+        }
+        card.innerHTML = `
+          <div style="background: #f0fdf4; border: 1.5px solid #86efac; border-radius: 8px; padding: 12px 14px; color: #14532d;">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
+              <strong style="font-size: 13.5px; color: #166534;">Correctness Verification: PASSED (SciPy HiGHS Solver)</strong>
+              <span class="badge badge-green">Match Confirmed</span>
+            </div>
+            <div style="font-size: 13px; margin-bottom: 8px;">${corr.message}</div>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 6px; font-size: 12px; background: rgba(255,255,255,0.7); padding: 8px 10px; border-radius: 6px; border: 1px solid #bbf7d0;">
+              <div>&bull; <strong>SciPy Version:</strong> v${corr.scipy_version || sci.version || 'installed'}</div>
+              <div>&bull; <strong>Solver Method:</strong> <code>${sci.method || 'highs'}</code></div>
+              <div>&bull; <strong>SciPy Iterations:</strong> ${corr.scipy_iterations !== undefined ? corr.scipy_iterations : (sci.nit !== undefined ? sci.nit : 0)}</div>
+              <div>&bull; <strong>SciPy Optimal Min z*:</strong> <code>${sci.fun !== undefined ? sci.fun : corr.scipy_optimal}</code></div>
+              <div>&bull; <strong>Simplex Optimal Min z*:</strong> <code>${corr.our_optimal}</code></div>
+              <div>&bull; <strong>Abs Difference:</strong> <code>${Number(corr.difference || 0).toExponential(2)}</code></div>
+            </div>
+            ${varList}
+          </div>
+        `;
+      } else if (corr.status === 'DISCREPANCY') {
+        card.innerHTML = `
+          <div style="background: #fef2f2; border: 1.5px solid #fca5a5; border-radius: 8px; padding: 12px 14px; color: #991b1b;">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
+              <strong style="font-size: 13.5px;">Correctness Verification: DISCREPANCY DETECTED</strong>
+              <span class="badge badge-red">Discrepancy</span>
+            </div>
+            <div style="font-size: 13px; margin-top: 4px;">${corr.message}</div>
+          </div>
+        `;
+      } else if (!corr.installed) {
+        card.innerHTML = `
+          <div style="background: #fffbeb; border: 1.5px solid #fde68a; border-radius: 8px; padding: 12px 14px; color: #92400e;">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+              <strong style="font-size: 13.5px;">Cross-Verification Status (SciPy linprog)</strong>
+              <span class="badge badge-amber">Skipped</span>
+            </div>
+            <div style="font-size: 12.5px; margin-top: 4px;">
+              ${corr.message}
+              <div style="margin-top: 4px;">To enable automatic dual-solver cross-verification, run in terminal:</div>
+              <code style="background: #fef3c7; padding: 3px 6px; border-radius: 4px; font-size: 11.5px; display: inline-block; margin-top: 4px;">${corr.install_guide || 'pip3 install --user scipy numpy'}</code>
+            </div>
+          </div>
+        `;
       }
     }
 

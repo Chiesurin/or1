@@ -1219,6 +1219,25 @@ def solve_with_scipy(tab: SimplexTableau, lp: Optional[LinearProgram] = None, ob
         }
 
 
+def verify_with_scipy(tab: SimplexTableau, result: Dict[str, Any]):
+    """Compares the custom Simplex solution against SciPy linprog output."""
+    scipy_info = result.get("scipy")
+    if not scipy_info or not scipy_info.get("installed"):
+        print("\n[Cross-Verification] SciPy is not installed; verification skipped.")
+        return
+    if not scipy_info.get("success"):
+        print(f"\n[Cross-Verification] SciPy could not find an optimal solution: {scipy_info.get('message')}")
+        return
+    if result.get("status") == "OPTIMAL" and result.get("solution"):
+        our_z = float(result["solution"]["optimal_z"])
+        scipy_z = scipy_info.get("fun")
+        if scipy_z is not None:
+            if abs(our_z - scipy_z) < 1e-5:
+                print(f"\n[Cross-Verification] MATCH CONFIRMED: Simplex Engine ({our_z:.6g}) == SciPy ({scipy_z:.6g})")
+            else:
+                print(f"\n[Cross-Verification] DISCREPANCY: Simplex Engine ({our_z}) vs SciPy ({scipy_z})")
+
+
 # ---------------------------------------------------------------------
 # CLI ENTRY POINT
 # ---------------------------------------------------------------------
