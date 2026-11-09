@@ -57,10 +57,11 @@ def format_approx(f: Fraction) -> str:
 
 
 def get_display_obj_val(raw_val: Fraction, obj_type: str = "min", obj_name: str = "-z") -> Fraction:
-    """Returns the true objective value (for -z = raw_val, returns z = -raw_val when minimizing)."""
-    if obj_name.startswith("-") or obj_type == "min":
-        return -raw_val
-    return raw_val
+    """Returns the true objective value for the original problem (min or max)."""
+    if obj_type == "max":
+        return raw_val
+    else:
+        return -raw_val if obj_name.startswith("-") else raw_val
 
 
 class SimplexTableau:
@@ -331,14 +332,14 @@ class LinearProgram:
         self.force_two_phase = force_two_phase
         self.var_names = list(var_names) if var_names else [f"x{j+1}" for j in range(self.num_vars)]
 
-    def to_tableau(self) -> Tuple[SimplexTableau, bool]:
+    def to_tableau(self, allow_negative_rhs: bool = False) -> Tuple[SimplexTableau, bool]:
         """Converts the Linear Program to standard form and creates the initial SimplexTableau."""
         norm_constraints = []
         for coeffs, rel, rhs in self.constraints:
             c_list = list(coeffs)
             r_rel = rel
             r_rhs = rhs
-            if r_rhs < 0:
+            if not allow_negative_rhs and r_rhs < 0:
                 c_list = [-c for c in c_list]
                 r_rhs = -r_rhs
                 if r_rel == "<=":
@@ -347,7 +348,7 @@ class LinearProgram:
                     r_rel = "<="
             norm_constraints.append((c_list, r_rel, r_rhs))
 
-        needs_phase1 = self.force_two_phase or any(rel in (">=", "=") for _, rel, _ in norm_constraints)
+        needs_phase1 = False if allow_negative_rhs else (self.force_two_phase or any(rel in (">=", "=") for _, rel, _ in norm_constraints))
 
         # Name slacks as x, continuing from highest existing decision variable index
         existing_x_indices = [
@@ -435,6 +436,9 @@ class LinearProgram:
                         phase1_row0[c_idx] -= matrix_A[i][c_idx]
 
             phase1_tableau_data = [phase1_row0] + matrix_A
+            self.constraint_aux = constraint_aux
+            self.full_var_names = full_var_names
+            self.norm_constraints = norm_constraints
             return SimplexTableau(full_var_names, var_indices, phase1_tableau_data, basic_vars, obj_name="-w", orig_row0=orig_obj_row), True
         else:
             # Phase 2 directly
@@ -449,12 +453,30 @@ class LinearProgram:
                         phase2_row0[col] -= factor * matrix_A[r_idx][col]
 
             phase2_tableau_data = [phase2_row0] + matrix_A
+            self.constraint_aux = constraint_aux
+            self.full_var_names = full_var_names
+            self.norm_constraints = norm_constraints
             return SimplexTableau(full_var_names, var_indices, phase2_tableau_data, basic_vars, obj_name="-z", orig_row0=orig_obj_row), False
 
 
 def parse_lp_text(text: str, force_two_phase: bool = False) -> LinearProgram:
     """Parses standard LP formulation text into a LinearProgram object."""
-    lines = [l.strip() for l in text.strip().splitlines() if l.strip() and not l.strip().startswith("#")]
+    raw_text = text.strip()
+    if ("s.t." in raw_text.lower() or "subject to" in raw_text.lower()) and "\n" not in raw_text:
+        parts = re.split(r's\.?t\.?:?|subject\s+to:?', raw_text, flags=re.I)
+        obj_part = parts[0].strip()
+        constr_part = parts[1].strip() if len(parts) > 1 else ""
+        constr_lines = [c.strip() for c in constr_part.split(";") if c.strip()]
+        lines = [obj_part] + constr_lines
+    else:
+        raw_lines = [l.strip() for l in raw_text.splitlines() if l.strip() and not l.strip().startswith("#")]
+        lines = []
+        for l in raw_lines:
+            if ";" in l:
+                lines.extend([sub.strip() for sub in l.split(";") if sub.strip()])
+            else:
+                lines.append(l)
+
     if len(lines) < 2:
         raise ValueError("LP formulation requires at least an objective function and 1 constraint.")
 
@@ -721,8 +743,483 @@ def solve_simplex_with_calculations(
     return "ITERATION_LIMIT", history, tab
 
 
-def run_full_solver(tab: SimplexTableau, force_two_phase: bool = False, obj_type: str = "min") -> Dict[str, Any]:
-    """Executes Simplex or Two-Phase Simplex and returns complete calculations and report data."""
+# ---------------------------------------------------------------------
+# DUAL SIMPLEX SOLVER ENGINE
+# ---------------------------------------------------------------------
+
+class DualSimplexStepDetail:
+    """Holds detailed calculations and snapshots for one Dual Simplex iteration."""
+    def __init__(self, iteration: int, phase_name: str, tableau_before: SimplexTableau):
+        self.iteration = iteration
+        self.phase_name = phase_name
+        self.tableau_before = SimplexTableau(
+            tableau_before.var_names, tableau_before.var_indices,
+            tableau_before.tableau, tableau_before.basic_vars, tableau_before.obj_name
+        )
+        self.status: str = "CONTINUE"
+        self.negative_rows: List[Dict[str, Any]] = []
+        self.leaving_var: Optional[str] = None
+        self.leaving_row: Optional[int] = None
+        self.ratios: List[Dict[str, Any]] = []
+        self.min_ratio: Optional[Fraction] = None
+        self.entering_var: Optional[str] = None
+        self.entering_col: Optional[int] = None
+        self.tie_detected: bool = False
+        self.bland_tie_note: Optional[str] = None
+        self.pivot_element: Optional[Fraction] = None
+        self.pivot_row_normalization_formula: str = ""
+        self.elimination_formulas: List[str] = []
+        self.tableau_after: Optional[SimplexTableau] = None
+
+
+def solve_dual_simplex_with_calculations(
+    initial_tab: SimplexTableau,
+    phase_name: str = "Dual Simplex",
+    obj_type: str = "min",
+    max_iterations: int = 100
+) -> Tuple[str, List[Any], SimplexTableau]:
+    """
+    Solves a dual-feasible tableau using the Dual Simplex method with Bland's rule.
+    Records step-by-step mathematical calculations:
+    1. Primal feasibility check: all RHS >= 0.
+    2. Leaving variable selection: min RHS (most negative).
+    3. Dual Minimum Ratio Test: min(c_j / |a_rj|) for a_rj < 0.
+    4. Elementary row operations.
+    """
+    tab = SimplexTableau(
+        initial_tab.var_names, initial_tab.var_indices,
+        initial_tab.tableau, initial_tab.basic_vars, initial_tab.obj_name
+    )
+
+    history: List[DualSimplexStepDetail] = []
+    iteration = 0
+
+    while iteration < max_iterations:
+        step = DualSimplexStepDetail(iteration, phase_name, tab)
+
+        # Check primal feasibility
+        negative_rows = []
+        for i in range(1, tab.num_rows()):
+            rhs_val = tab.tableau[i][-1]
+            if rhs_val < 0:
+                b_var = tab.basic_vars[i - 1]
+                v_idx = tab.var_indices.get(b_var, i)
+                negative_rows.append({
+                    "row": i,
+                    "basic": b_var,
+                    "index": v_idx,
+                    "rhs": rhs_val
+                })
+
+        step.negative_rows = negative_rows
+
+        if not negative_rows:
+            step.status = "OPTIMAL"
+            step.tableau_after = SimplexTableau(tab.var_names, tab.var_indices, tab.tableau, tab.basic_vars, tab.obj_name)
+            history.append(step)
+            return "OPTIMAL", history, tab
+
+        # Step 1: Leaving Variable Selection (Most negative RHS)
+        most_neg_rhs = min(r["rhs"] for r in negative_rows)
+        tied_leaving = [r for r in negative_rows if r["rhs"] == most_neg_rhs]
+        if len(tied_leaving) > 1:
+            step.tie_detected = True
+            tied_leaving.sort(key=lambda r: r["index"])
+            leaving_item = tied_leaving[0]
+            step.bland_tie_note = (
+                f"Tie between leaving rows {[t['row'] for t in tied_leaving]} with RHS = {format_fraction(most_neg_rhs)}. "
+                f"Bland's rule selects '{leaving_item['basic']}' (Index {leaving_item['index']})."
+            )
+        else:
+            leaving_item = tied_leaving[0]
+
+        step.leaving_row = leaving_item["row"]
+        step.leaving_var = leaving_item["basic"]
+
+        # Step 2: Dual Minimum Ratio Test
+        # Across negative entries in leaving row: theta_j = c_j / |a_rj|
+        ratios = []
+        for j, var_name in enumerate(tab.var_names):
+            coeff = tab.tableau[step.leaving_row][j]
+            cost = tab.tableau[0][j]
+            v_idx = tab.var_indices[var_name]
+
+            if coeff < 0:
+                ratio_val = cost / abs(coeff)
+                ratios.append({
+                    "col": j,
+                    "var": var_name,
+                    "index": v_idx,
+                    "cost": cost,
+                    "coeff": coeff,
+                    "ratio": ratio_val,
+                    "valid": True
+                })
+            else:
+                ratios.append({
+                    "col": j,
+                    "var": var_name,
+                    "index": v_idx,
+                    "cost": cost,
+                    "coeff": coeff,
+                    "ratio": None,
+                    "valid": False,
+                    "reason": "a_rj >= 0"
+                })
+
+        step.ratios = ratios
+        valid_ratios = [r for r in ratios if r["valid"]]
+
+        if not valid_ratios:
+            step.status = "INFEASIBLE"
+            step.tableau_after = SimplexTableau(tab.var_names, tab.var_indices, tab.tableau, tab.basic_vars, tab.obj_name)
+            history.append(step)
+            return "INFEASIBLE", history, tab
+
+        min_ratio_val = min(r["ratio"] for r in valid_ratios)
+        tied_entering = [r for r in valid_ratios if r["ratio"] == min_ratio_val]
+        step.min_ratio = min_ratio_val
+
+        if len(tied_entering) > 1:
+            step.tie_detected = True
+            tied_entering.sort(key=lambda r: r["index"])
+            entering_item = tied_entering[0]
+            step.bland_tie_note = (
+                f"Dual tie between columns {[t['var'] for t in tied_entering]} with ratio θ = {format_fraction(min_ratio_val)}. "
+                f"Bland's rule selects '{entering_item['var']}' (Index {entering_item['index']})."
+            )
+        else:
+            entering_item = tied_entering[0]
+
+        step.entering_col = entering_item["col"]
+        step.entering_var = entering_item["var"]
+
+        pivot_elem = tab.tableau[step.leaving_row][step.entering_col]
+        step.pivot_element = pivot_elem
+
+        # Step 3: Elementary Row Operations
+        step.pivot_row_normalization_formula = (
+            f"R_{step.leaving_row} \\leftarrow \\frac{{1}}{{{format_fraction(pivot_elem)}}} \\times R_{step.leaving_row}"
+        )
+        tab.tableau[step.leaving_row] = [x / pivot_elem for x in tab.tableau[step.leaving_row]]
+
+        for r in range(tab.num_rows()):
+            if r != step.leaving_row:
+                factor = tab.tableau[r][step.entering_col]
+                if factor != 0:
+                    tab.tableau[r] = [tab.tableau[r][c] - factor * tab.tableau[step.leaving_row][c] for c in range(tab.num_cols() + 1)]
+                    sign = "-" if factor > 0 else "+"
+                    abs_factor_str = format_fraction(abs(factor))
+                    row_name = tab.obj_name if r == 0 else f"R_{r}"
+                    if abs(factor) == 1:
+                        formula = f"{row_name} \\leftarrow {row_name} {sign} R_{step.leaving_row}"
+                    else:
+                        formula = f"{row_name} \\leftarrow {row_name} {sign} ({abs_factor_str}) \\times R_{step.leaving_row}"
+                    step.elimination_formulas.append(formula)
+
+        tab.basic_vars[step.leaving_row - 1] = step.entering_var
+        step.tableau_after = SimplexTableau(tab.var_names, tab.var_indices, tab.tableau, tab.basic_vars, tab.obj_name)
+        history.append(step)
+        iteration += 1
+
+    return "ITERATION_LIMIT", history, tab
+
+
+# ---------------------------------------------------------------------
+# DUALITY & EXACT SYSTEM SOLVER
+# ---------------------------------------------------------------------
+
+def solve_linear_system_exact(M: List[List[Fraction]], rhs: List[Fraction]) -> Optional[List[Fraction]]:
+    """Solves M * y = rhs for square matrix M using Gaussian elimination with Fractions."""
+    n = len(M)
+    if n == 0 or len(rhs) != n:
+        return None
+    aug = [list(M[i]) + [rhs[i]] for i in range(n)]
+    for col in range(n):
+        pivot_row = -1
+        for r in range(col, n):
+            if aug[r][col] != 0:
+                pivot_row = r
+                break
+        if pivot_row == -1:
+            return None
+        if pivot_row != col:
+            aug[col], aug[pivot_row] = aug[pivot_row], aug[col]
+        p_val = aug[col][col]
+        aug[col] = [val / p_val for val in aug[col]]
+        for r in range(n):
+            if r != col and aug[r][col] != 0:
+                factor = aug[r][col]
+                aug[r] = [aug[r][c] - factor * aug[col][c] for c in range(n + 1)]
+    return [aug[r][-1] for r in range(n)]
+
+
+def formulate_dual_problem(lp: LinearProgram) -> Dict[str, Any]:
+    """
+    Formulates the exact mathematical dual of the given Linear Program.
+    Minimization primal -> Maximization dual
+    Maximization primal -> Minimization dual
+    Handles <=, >=, and = constraints with exact sign conditions.
+    """
+    m = len(lp.constraints)
+    n = len(lp.var_names)
+    dual_var_names = [f"y{i+1}" for i in range(m)]
+
+    if lp.obj_type == "min":
+        dual_obj_type = "max"
+        dual_obj_coeffs = [rhs for _, _, rhs in lp.constraints]
+        dual_constraints = []
+        for j in range(n):
+            row_coeffs = [lp.constraints[i][0][j] for i in range(m)]
+            rhs_val = lp.obj_coeffs[j]
+            dual_constraints.append((row_coeffs, "<=", rhs_val, lp.var_names[j]))
+
+        dual_bounds = []
+        for i, (_, rel, _) in enumerate(lp.constraints):
+            y_name = dual_var_names[i]
+            if rel in ("<=", "le"):
+                dual_bounds.append((y_name, "<= 0"))
+            elif rel in (">=", "ge"):
+                dual_bounds.append((y_name, ">= 0"))
+            elif rel in ("=", "eq"):
+                dual_bounds.append((y_name, "free"))
+    else:
+        dual_obj_type = "min"
+        dual_obj_coeffs = [rhs for _, _, rhs in lp.constraints]
+        dual_constraints = []
+        for j in range(n):
+            row_coeffs = [lp.constraints[i][0][j] for i in range(m)]
+            rhs_val = lp.obj_coeffs[j]
+            dual_constraints.append((row_coeffs, ">=", rhs_val, lp.var_names[j]))
+
+        dual_bounds = []
+        for i, (_, rel, _) in enumerate(lp.constraints):
+            y_name = dual_var_names[i]
+            if rel in ("<=", "le"):
+                dual_bounds.append((y_name, ">= 0"))
+            elif rel in (">=", "ge"):
+                dual_bounds.append((y_name, "<= 0"))
+            elif rel in ("=", "eq"):
+                dual_bounds.append((y_name, "free"))
+
+    def format_linear_combo(coeffs: List[Fraction], vars: List[str]) -> str:
+        terms = []
+        for c, v in zip(coeffs, vars):
+            if c == 0:
+                continue
+            abs_c = abs(c)
+            coeff_str = "" if abs_c == 1 else f"{format_fraction(abs_c)}*"
+            sign = "+ " if c > 0 else "- "
+            if not terms:
+                sign = "" if c > 0 else "-"
+            terms.append(f"{sign}{coeff_str}{v}")
+        return " ".join(terms) if terms else "0"
+
+    dual_obj_str = format_linear_combo(dual_obj_coeffs, dual_var_names)
+    dual_constraints_str = []
+    for row_coeffs, rel, rhs_val, p_var in dual_constraints:
+        lhs_str = format_linear_combo(row_coeffs, dual_var_names)
+        dual_constraints_str.append(f"{lhs_str} {rel} {format_fraction(rhs_val)}  (for primal '{p_var}')")
+
+    bounds_str = ", ".join(f"{name} {bnd}" for name, bnd in dual_bounds)
+
+    return {
+        "primal_obj_type": lp.obj_type,
+        "dual_obj_type": dual_obj_type,
+        "dual_var_names": dual_var_names,
+        "dual_obj_coeffs": dual_obj_coeffs,
+        "dual_obj_str": dual_obj_str,
+        "dual_constraints": dual_constraints,
+        "dual_constraints_str": dual_constraints_str,
+        "dual_bounds": dual_bounds,
+        "dual_bounds_str": bounds_str
+    }
+
+
+def extract_duality_analysis(
+    final_tab: SimplexTableau,
+    primal_sol: Optional[Dict[str, Any]],
+    obj_type: str = "min",
+    lp: Optional[LinearProgram] = None
+) -> Optional[Dict[str, Any]]:
+    """
+    Extracts shadow prices (dual variables y* = c_B^T B^-1) from Row 0 of the optimal tableau
+    or via exact basis inversion, and verifies Strong Duality and Complementary Slackness.
+    """
+    if primal_sol is None:
+        return None
+
+    primal_z = primal_sol["optimal_z"]
+    sol_vec = primal_sol["solution_vector"]
+    m = final_tab.num_rows() - 1
+
+    shadow_prices = []
+    comp_slackness = []
+
+    if lp is not None:
+        dual_prob = formulate_dual_problem(lp)
+        A_std: List[List[Fraction]] = []
+        c_std: List[Fraction] = []
+        full_var_names = getattr(lp, "full_var_names", final_tab.var_names)
+        aux_vars = getattr(lp, "constraint_aux", [])
+
+        for name in full_var_names:
+            if name in lp.var_names:
+                idx = lp.var_names.index(name)
+                c_val = -lp.obj_coeffs[idx] if lp.obj_type == "max" else lp.obj_coeffs[idx]
+            else:
+                c_val = Fraction(0)
+            c_std.append(c_val)
+
+        for i, (coeffs, rel, rhs) in enumerate(lp.constraints):
+            row = [Fraction(0)] * len(full_var_names)
+            for j, c in enumerate(coeffs):
+                row[j] = c
+            if i < len(aux_vars):
+                if aux_vars[i].get("slack"):
+                    s_name = aux_vars[i]["slack"]
+                    if s_name in full_var_names:
+                        row[full_var_names.index(s_name)] = Fraction(1)
+                if aux_vars[i].get("surplus"):
+                    e_name = aux_vars[i]["surplus"]
+                    if e_name in full_var_names:
+                        row[full_var_names.index(e_name)] = Fraction(-1)
+            A_std.append(row)
+
+        B_mat: List[List[Fraction]] = []
+        c_B: List[Fraction] = []
+        basis_solvable = len(final_tab.basic_vars) == m
+        if basis_solvable:
+            for b_var in final_tab.basic_vars:
+                if b_var in full_var_names:
+                    col_idx = full_var_names.index(b_var)
+                    col_vec = [A_std[r][col_idx] for r in range(m)]
+                    B_mat.append(col_vec)
+                    c_B.append(c_std[col_idx])
+                else:
+                    basis_solvable = False
+                    break
+
+        y_star: Optional[List[Fraction]] = None
+        if basis_solvable and len(B_mat) == m:
+            y_star_min = solve_linear_system_exact(B_mat, c_B)
+            if y_star_min is not None:
+                if lp.obj_type == "max":
+                    y_star = [-y for y in y_star_min]
+                else:
+                    y_star = y_star_min
+
+        if y_star is None:
+            y_star = []
+            for i in range(m):
+                aux = aux_vars[i] if i < len(aux_vars) else {}
+                val = Fraction(0)
+                if aux.get("slack") and aux["slack"] in final_tab.var_names:
+                    c_idx = final_tab.var_names.index(aux["slack"])
+                    val = final_tab.tableau[0][c_idx]
+                    if lp.obj_type == "min" and lp.constraints[i][1] in ("<=", "le"):
+                        val = -val
+                elif aux.get("surplus") and aux["surplus"] in final_tab.var_names:
+                    c_idx = final_tab.var_names.index(aux["surplus"])
+                    val = final_tab.tableau[0][c_idx]
+                y_star.append(val)
+
+        dual_w = sum(lp.constraints[i][2] * y_star[i] for i in range(m))
+
+        for i, (coeffs, rel, rhs) in enumerate(lp.constraints):
+            y_val = y_star[i]
+            lhs_eval = sum(coeffs[j] * sol_vec.get(lp.var_names[j], Fraction(0)) for j in range(len(coeffs)))
+            slack_val = rhs - lhs_eval if rel in ("<=", "le") else (lhs_eval - rhs if rel in (">=", "ge") else Fraction(0))
+            slack_name = (aux_vars[i].get("slack") if i < len(aux_vars) else None) or (aux_vars[i].get("surplus") if i < len(aux_vars) else None) or f"slack_{i+1}"
+            sp_entry = {
+                "var_name": f"y{i+1}",
+                "constraint_idx": i + 1,
+                "constraint_desc": f"C{i+1} ({rel} {format_fraction(rhs)})",
+                "value": y_val,
+                "value_approx": format_approx(y_val),
+                "slack_name": slack_name,
+                "slack_val": slack_val,
+                "slack_desc": f"{slack_name} = {format_fraction(slack_val)}"
+            }
+            shadow_prices.append(sp_entry)
+
+            prod = y_val * slack_val
+            comp_slackness.append({
+                "type": "Primal Slackness",
+                "desc": f"y{i+1} * {slack_name}",
+                "calc": f"{format_fraction(y_val)} * {format_fraction(slack_val)} = {format_fraction(prod)}",
+                "satisfied": prod == 0
+            })
+
+        for j, p_var in enumerate(lp.var_names):
+            x_val = sol_vec.get(p_var, Fraction(0))
+            dual_lhs = sum(lp.constraints[i][0][j] * y_star[i] for i in range(m))
+            dual_rhs = lp.obj_coeffs[j]
+            dual_slack = abs(dual_lhs - dual_rhs)
+            prod = x_val * dual_slack
+            comp_slackness.append({
+                "type": "Dual Slackness",
+                "desc": f"{p_var} * DualSlack_{p_var}",
+                "calc": f"{format_fraction(x_val)} * {format_fraction(dual_slack)} = {format_fraction(prod)}",
+                "satisfied": prod == 0
+            })
+
+        dual_obj_type = dual_prob["dual_obj_type"]
+    else:
+        dual_prob = None
+        dual_obj_type = "max" if obj_type == "min" else "min"
+        y_star = []
+        for r in range(1, final_tab.num_rows()):
+            b_var = final_tab.basic_vars[r - 1]
+            val = final_tab.tableau[0][final_tab.var_indices.get(b_var, r) - 1] if r - 1 < len(final_tab.var_names) else Fraction(0)
+            y_star.append(val)
+            shadow_prices.append({
+                "var_name": f"y{r}",
+                "constraint_idx": r,
+                "constraint_desc": f"Row {r} ({b_var})",
+                "value": val,
+                "value_approx": format_approx(val),
+                "slack_name": f"s{r}",
+                "slack_val": Fraction(0),
+                "slack_desc": f"s{r} = 0"
+            })
+        dual_w = primal_z
+
+    strong_duality_holds = (primal_z == dual_w)
+
+    return {
+        "dual_obj_type": dual_obj_type,
+        "primal_z": primal_z,
+        "dual_w": dual_w,
+        "strong_duality_holds": strong_duality_holds,
+        "dual_problem": dual_prob,
+        "shadow_prices": shadow_prices,
+        "complementary_slackness": comp_slackness
+    }
+
+
+def run_full_solver(
+    tab: SimplexTableau,
+    force_two_phase: bool = False,
+    obj_type: str = "min",
+    use_dual_simplex: bool = False,
+    lp: Optional[LinearProgram] = None
+) -> Dict[str, Any]:
+    """Executes Primal Simplex, Two-Phase Simplex, or Dual Simplex and returns complete calculations and report data."""
+    if use_dual_simplex:
+        is_dual_feasible = all(tab.tableau[0][c] >= 0 for c in range(tab.num_cols()))
+        if not is_dual_feasible:
+            return {
+                "status": "DUAL_INFEASIBLE",
+                "obj_type": obj_type,
+                "phases": [],
+                "final_tableau": tab,
+                "solution": None,
+                "error_message": "Tableau is not dual-feasible: Row 0 has negative reduced costs (c_j < 0). Dual Simplex requires an initial dual-feasible tableau (all c_j >= 0)."
+            }
+        status, steps, final_tab = solve_dual_simplex_with_calculations(tab, phase_name="Dual Simplex", obj_type=obj_type)
+        return build_solution_dict(status, [("Dual Simplex", steps)], final_tab, tab.var_names, obj_type, lp=lp)
+
     m = tab.num_rows() - 1
     needs_phase1 = force_two_phase or tab.obj_name == "-w" or any(v.startswith("y") for v in tab.var_names)
 
@@ -733,7 +1230,7 @@ def run_full_solver(tab: SimplexTableau, force_two_phase: bool = False, obj_type
 
     if not needs_phase1:
         status, steps, final_tab = solve_simplex_with_calculations(tab, obj_type=obj_type)
-        return build_solution_dict(status, [("Simplex", steps)], final_tab, tab.var_names, obj_type)
+        return build_solution_dict(status, [("Simplex", steps)], final_tab, tab.var_names, obj_type, lp=lp)
 
     # -----------------------------------------------------------------
     # TWO-PHASE SIMPLEX
@@ -792,11 +1289,11 @@ def run_full_solver(tab: SimplexTableau, force_two_phase: bool = False, obj_type
     )
 
     if p1_status != "OPTIMAL":
-        return build_solution_dict(p1_status, [("Phase 1", p1_steps)], solved_p1_tab, original_var_names, obj_type)
+        return build_solution_dict(p1_status, [("Phase 1", p1_steps)], solved_p1_tab, original_var_names, obj_type, lp=lp)
 
     w_opt = solved_p1_tab.tableau[0][-1]
     if w_opt != 0:
-        res = build_solution_dict("INFEASIBLE", [("Phase 1", p1_steps)], solved_p1_tab, original_var_names, obj_type)
+        res = build_solution_dict("INFEASIBLE", [("Phase 1", p1_steps)], solved_p1_tab, original_var_names, obj_type, lp=lp)
         res["infeasible_reason"] = f"Minimum sum of artificial variables W = {format_fraction(-w_opt)} > 0"
         return res
 
@@ -861,19 +1358,20 @@ def run_full_solver(tab: SimplexTableau, force_two_phase: bool = False, obj_type
     )
 
     all_phases = [("Phase 1", p1_steps), ("Phase 2", p2_steps)]
-    return build_solution_dict(p2_status, all_phases, final_tab, original_var_names, obj_type)
+    return build_solution_dict(p2_status, all_phases, final_tab, original_var_names, obj_type, lp=lp)
 
 
-def build_solution_dict(status: str, phase_steps: List[Tuple[str, List[SimplexStepDetail]]],
+def build_solution_dict(status: str, phase_steps: List[Tuple[str, List[Any]]],
                         final_tab: SimplexTableau, original_var_names: List[str],
-                        obj_type: str) -> Dict[str, Any]:
-    """Assembles the final dictionary with solution vector, objective value, and full steps."""
+                        obj_type: str, lp: Optional[LinearProgram] = None) -> Dict[str, Any]:
+    """Assembles the final dictionary with solution vector, objective value, duality analysis, and full steps."""
     result: Dict[str, Any] = {
         "status": status,
         "obj_type": obj_type,
         "phases": phase_steps,
         "final_tableau": final_tab,
-        "solution": None
+        "solution": None,
+        "duality": None
     }
 
     if status == "OPTIMAL":
@@ -892,6 +1390,7 @@ def build_solution_dict(status: str, phase_steps: List[Tuple[str, List[SimplexSt
             "solution_vector": sol_vector,
             "basic_vars": list(final_tab.basic_vars)
         }
+        result["duality"] = extract_duality_analysis(final_tab, result["solution"], obj_type=obj_type, lp=lp)
     return result
 
 
@@ -932,6 +1431,60 @@ def generate_markdown_report(result: Dict[str, Any], title: str = "Simplex Table
             lines.append(f"**Current Basic Solution**: {', '.join(basic_parts)}")
             lines.append(f"**Objective Equation**: ${step.tableau_before.obj_name} = {format_fraction(raw_rhs)} \\implies z = {format_fraction(z_curr)}$")
             lines.append("")
+
+            if isinstance(step, DualSimplexStepDetail):
+                if step.status == "OPTIMAL":
+                    lines.append("> [!TIP]")
+                    lines.append(f"> **Optimality Reached**: All constraint RHS values are $\\ge 0$ (primal feasibility achieved). The tableau is optimal.")
+                    lines.append("")
+                    continue
+                if step.status == "INFEASIBLE":
+                    lines.append("> [!WARNING]")
+                    lines.append(f"> **Infeasible Problem**: Leaving row $R_{step.leaving_row}$ has no negative constraint entries ($a_{{lj}} \\ge 0$). Dual problem is unbounded.")
+                    lines.append("")
+                    continue
+
+                # Leaving Variable
+                lines.append("#### 1. Leaving Variable Selection (Negative RHS)")
+                neg_str = ", ".join(f"`{r['basic']}` (Row $R_{r['row']}$, RHS: ${format_fraction(r['rhs'])}$)" for r in step.negative_rows)
+                lines.append(f"- **Candidates with negative RHS**: {neg_str}")
+                lines.append(f"- **Selected Leaving Variable**: `{step.leaving_var}` ($R_{step.leaving_row}$).")
+                if step.tie_detected and step.bland_tie_note:
+                    lines.append(f"- > [!IMPORTANT]\n  > {step.bland_tie_note}")
+                lines.append("")
+
+                # Dual Ratio Test
+                lines.append(f"#### 2. Dual Minimum Ratio Test (Entering Variable for Row $R_{step.leaving_row}$)")
+                lines.append("| Col | Variable | Reduced Cost $c_j$ | Row Entry $a_{lj}$ | Ratio $\\theta = c_j / |a_{lj}|$ | Valid? |")
+                lines.append("| --- | --- | --- | --- | --- | --- |")
+                for r in step.ratios:
+                    if r["valid"]:
+                        ratio_str = f"$\\frac{{{format_fraction(r['cost'])}}}{{|{format_fraction(r['coeff'])}|}} = {format_fraction(r['ratio'])}$"
+                        valid_str = "Yes"
+                    else:
+                        ratio_str = f"Skipped ({r['reason']})"
+                        valid_str = "No"
+                    lines.append(f"| {r['col']} | `{r['var']}` | ${format_fraction(r['cost'])}$ | ${format_fraction(r['coeff'])}$ | {ratio_str} | {valid_str} |")
+                lines.append("")
+                lines.append(f"- **Minimum Ratio**: $\\theta^* = {format_fraction(step.min_ratio)}$")
+                lines.append(f"- **Selected Entering Variable**: `{step.entering_var}` (Column {step.entering_col})")
+                if step.tie_detected and step.bland_tie_note:
+                    lines.append(f"- > [!IMPORTANT]\n  > {step.bland_tie_note}")
+                lines.append(f"- **Pivot Element**: $(R_{step.leaving_row}, \\text{{{step.entering_var}}}) = {format_fraction(step.pivot_element)}$")
+                lines.append("")
+
+                # Row Operations
+                lines.append("#### 3. Elementary Row Operations (Pivot)")
+                lines.append(f"- **Normalize Pivot Row**: ${step.pivot_row_normalization_formula}$")
+                if step.elimination_formulas:
+                    lines.append("- **Row Eliminations**:")
+                    for elim in step.elimination_formulas:
+                        lines.append(f"  - ${elim}$")
+                lines.append(f"- **Basis Updated**: Row $R_{step.leaving_row}$ basis changes from `{step.leaving_var}` $\\rightarrow$ `{step.entering_var}`.")
+                lines.append("")
+                lines.append("---")
+                lines.append("")
+                continue
 
             if step.status == "OPTIMAL":
                 lines.append("> [!TIP]")
@@ -990,7 +1543,7 @@ def generate_markdown_report(result: Dict[str, Any], title: str = "Simplex Table
     lines.append(f"- **Termination Status**: `{result['status']}`")
     if result["status"] == "OPTIMAL":
         sol = result["solution"]
-        lines.append(f"- **Optimal Value**: $\\min z^* = {sol['optimal_z_approx']}$")
+        lines.append(f"- **Optimal Value**: $\\{result['obj_type']} z^* = {sol['optimal_z_approx']}$")
         lines.append(f"- **Row 0 RHS**: $-z = {format_fraction(sol['raw_rhs'])}$")
         lines.append("")
         lines.append("### Optimal Variable Assignment:")
@@ -1005,6 +1558,49 @@ def generate_markdown_report(result: Dict[str, Any], title: str = "Simplex Table
     elif result["status"] == "UNBOUNDED":
         lines.append("- **Reason**: An entering column has no positive constraint entries.")
     lines.append("")
+
+    # Duality Analysis Section in Markdown
+    duality = result.get("duality")
+    if duality:
+        lines.append("## Duality Analysis & Shadow Prices")
+        lines.append("")
+        if duality.get("dual_problem"):
+            dp = duality["dual_problem"]
+            lines.append("### Dual Linear Program Formulation")
+            lines.append(f"- **Dual Objective**: $\\{dp['dual_obj_type']} w = {dp['dual_obj_str']}$")
+            lines.append("- **Dual Constraints**:")
+            for c_str in dp['dual_constraints_str']:
+                lines.append(f"  - ${c_str}$")
+            lines.append(f"- **Dual Variable Bounds**: ${dp['dual_bounds_str']}$")
+            lines.append("")
+
+        lines.append("### Strong Duality Verification")
+        z_str = format_fraction(duality['primal_z'])
+        w_str = format_fraction(duality['dual_w'])
+        lines.append(f"- **Primal Optimal Value ($z^*$)**: ${z_str}$")
+        lines.append(f"- **Dual Optimal Value ($w^*$)**: ${w_str}$")
+        if duality.get("strong_duality_holds"):
+            lines.append(f"- **Strong Duality Condition**: Exact match $z^* = w^* = {z_str}$. Strong Duality holds.")
+        else:
+            lines.append("- **Strong Duality Condition**: Discrepancy detected.")
+        lines.append("")
+
+        if duality.get("shadow_prices"):
+            lines.append("### Shadow Prices (Dual Variables $y^* = c_B^T B^{-1}$)")
+            lines.append("| Dual Variable | Associated Primal Constraint | Shadow Price $y_i^*$ | Primal Slack / Surplus |")
+            lines.append("| --- | --- | --- | --- |")
+            for sp in duality["shadow_prices"]:
+                lines.append(f"| `{sp['var_name']}` | {sp['constraint_desc']} | ${format_fraction(sp['value'])}$ ({sp['value_approx']}) | `{sp['slack_desc']}` |")
+            lines.append("")
+
+        if duality.get("complementary_slackness"):
+            lines.append("### Complementary Slackness Theorem")
+            lines.append("| Condition Type | Complementary Pair | Exact Product | Satisfied? |")
+            lines.append("| --- | --- | --- | --- |")
+            for cs in duality["complementary_slackness"]:
+                sat_str = "Yes" if cs["satisfied"] else "No"
+                lines.append(f"| {cs['type']} | `{cs['desc']}` | ${cs['calc']}$ | {sat_str} |")
+            lines.append("")
 
     # SciPy Integration Section in Markdown
     scipy_info = result.get("scipy")
@@ -1054,6 +1650,42 @@ def print_terminal_walkthrough(result: Dict[str, Any]):
             print(f"    Basis: {', '.join(basic_parts)}")
             print(f"    Objective: {step.tableau_before.obj_name} = {format_fraction(raw_rhs)}  =>  z = {format_fraction(-raw_rhs)}")
 
+            if isinstance(step, DualSimplexStepDetail):
+                if step.status == "OPTIMAL":
+                    print(f"\n[OPTIMAL] All constraint RHS entries are >= 0 (primal feasibility achieved). Dual Simplex reached optimality!")
+                    continue
+                if step.status == "INFEASIBLE":
+                    print(f"\n[INFEASIBLE] For leaving row R{step.leaving_row} ({step.leaving_var}), all constraint entries are >= 0. The primal problem is infeasible.")
+                    continue
+
+                # Leaving
+                print(f"\n[1] Leaving Variable Selection (Negative RHS):")
+                neg_desc = [f"{r['basic']} (R{r['row']}, RHS = {format_fraction(r['rhs'])})" for r in step.negative_rows]
+                print(f"    Candidates with RHS < 0: {', '.join(neg_desc)}")
+                print(f"    Selected Leaving Variable: '{step.leaving_var}' (Row {step.leaving_row})")
+                if step.tie_detected and step.bland_tie_note:
+                    print(f"    [Bland Tie Break] {step.bland_tie_note}")
+
+                # Entering (Dual Ratio Test)
+                print(f"\n[2] Dual Minimum Ratio Test for Leaving Row R{step.leaving_row}:")
+                for r in step.ratios:
+                    if r["valid"]:
+                        print(f"    Col '{r['var']}': c_j / |a_rj| = {format_fraction(r['cost'])} / |{format_fraction(r['coeff'])}| = {format_fraction(r['ratio'])}")
+                    else:
+                        print(f"    Col '{r['var']}': Skipped ({r['reason']})")
+                print(f"    Selected Entering Variable: '{step.entering_var}' (min θ = {format_fraction(step.min_ratio)})")
+                if step.tie_detected and step.bland_tie_note:
+                    print(f"    [Bland Tie Break] {step.bland_tie_note}")
+                print(f"    Pivot Element: (R{step.leaving_row}, {step.entering_var}) = {format_fraction(step.pivot_element)}")
+
+                # Row Ops
+                print("\n[3] Elementary Row Operations:")
+                print(f"    Normalize: {step.pivot_row_normalization_formula}")
+                for elim in step.elimination_formulas:
+                    print(f"    Eliminate: {elim}")
+                print(f"    Updated Basis: Row R{step.leaving_row} is now '{step.entering_var}'")
+                continue
+
             if step.status == "OPTIMAL":
                 print(f"\n[OPTIMAL] All Row 0 reduced costs are >= 0. {phase_name} reached optimality!")
                 continue
@@ -1091,7 +1723,7 @@ def print_terminal_walkthrough(result: Dict[str, Any]):
     print(f" Status: {result['status']}")
     if result["status"] == "OPTIMAL":
         sol = result["solution"]
-        print(f" Optimal Objective (Min z*): {sol['optimal_z_approx']}")
+        print(f" Optimal Objective ({result['obj_type'].capitalize()} z*): {sol['optimal_z_approx']}")
         print(f" Row 0 RHS (-z): {format_fraction(sol['raw_rhs'])}")
         print(" Optimal Solution Vector:")
         for v_name, val in sol["solution_vector"].items():
@@ -1099,6 +1731,47 @@ def print_terminal_walkthrough(result: Dict[str, Any]):
             print(f"   {v_name:<6} = {format_approx(val):<12} ({b_tag})")
     elif result["status"] == "INFEASIBLE":
         print(f" Infeasible: {result.get('infeasible_reason', '')}")
+    elif result["status"] == "DUAL_INFEASIBLE":
+        print(f" Dual Infeasible: {result.get('error_message', '')}")
+    elif result["status"] == "UNBOUNDED":
+        print(" Unbounded: Entering column has no positive constraint entries.")
+
+    duality = result.get("duality")
+    if duality:
+        print("\n" + "=" * 82)
+        print(" DUAL PROBLEM, SHADOW PRICES & DUALITY THEOREMS".center(82))
+        print("=" * 82)
+        if duality.get("dual_problem"):
+            dp = duality["dual_problem"]
+            print(f"\n[Dual Linear Program Formulation]")
+            print(f"  Objective: {dp['dual_obj_type'].upper()} w = {dp['dual_obj_str']}")
+            print("  Subject to:")
+            for c_str in dp['dual_constraints_str']:
+                print(f"    {c_str}")
+            print(f"  Variable Bounds: {dp['dual_bounds_str']}")
+
+        z_str = format_fraction(duality['primal_z'])
+        w_str = format_fraction(duality['dual_w'])
+        print(f"\n[Strong Duality Theorem]")
+        print(f"  Primal Optimal Value (z*): {z_str}")
+        print(f"  Dual Optimal Value   (w*): {w_str}")
+        if duality.get("strong_duality_holds"):
+            print(f"  Status: STRONG DUALITY HOLDS (z* == w* = {z_str})")
+        else:
+            print("  Status: Discrepancy detected")
+
+        if duality.get("shadow_prices"):
+            print(f"\n[Shadow Prices / Dual Variables (y* = c_B^T B^-1)]")
+            print(f"  {'Dual Var':<10} {'Constraint':<20} {'Shadow Price (y*)':<22} {'Primal Slack':<18}")
+            print(f"  {'-'*10} {'-'*20} {'-'*22} {'-'*18}")
+            for sp in duality["shadow_prices"]:
+                print(f"  {sp['var_name']:<10} {sp['constraint_desc']:<20} {format_fraction(sp['value']):<22} {sp['slack_desc']:<18}")
+
+        if duality.get("complementary_slackness"):
+            print(f"\n[Complementary Slackness Theorem]")
+            for cs in duality["complementary_slackness"]:
+                sat = "SATISFIED" if cs["satisfied"] else "VIOLATED"
+                print(f"  * {cs['type']} ({cs['desc']}): {cs['calc']} => {sat}")
 
     scipy_info = result.get("scipy")
     if scipy_info:
@@ -1268,6 +1941,8 @@ Examples:
     group.add_argument("--lp", type=str, help="Linear Program formulation text")
 
     parser.add_argument("--two-phase", action="store_true", help="Force Two-Phase Simplex even if an initial basis exists")
+    parser.add_argument("--dual-simplex", action="store_true", help="Solve using the Dual Simplex algorithm (requires dual-feasible tableau)")
+    parser.add_argument("--show-dual", action="store_true", help="Display the mathematical dual linear program formulation")
     parser.add_argument("--output-md", type=str, help="Path to write the complete Markdown report (.md)")
     parser.add_argument("--format", choices=["text", "markdown", "json"], default="text", help="Terminal output format")
     parser.add_argument("--verify-scipy", action="store_true", help="Cross-verify against scipy.optimize.linprog if installed")
@@ -1279,27 +1954,48 @@ Examples:
         if args.csv:
             tableau = load_tableau_from_file(args.csv)
             obj_type = "min"
+            lp = None
         elif args.raw:
             tableau = parse_tableau_text(args.raw)
             obj_type = "min"
+            lp = None
         elif args.stdin:
             tableau = parse_tableau_text(sys.stdin.read())
             obj_type = "min"
+            lp = None
         elif args.lp:
             lp = parse_lp_text(args.lp, force_two_phase=args.two_phase)
-            tableau, forced_p1 = lp.to_tableau()
+            tableau, forced_p1 = lp.to_tableau(allow_negative_rhs=args.dual_simplex)
             obj_type = lp.obj_type
-            if forced_p1:
+            if forced_p1 and not args.dual_simplex:
                 args.two_phase = True
     except Exception as e:
         print(f"Error loading input tableau: {e}", file=sys.stderr)
         sys.exit(1)
 
+    if args.show_dual and args.lp:
+        dual_info = formulate_dual_problem(lp)
+        print("=" * 82)
+        print(" MATHEMATICAL DUAL PROBLEM FORMULATION".center(82))
+        print("=" * 82)
+        print(f" Objective: {dual_info['dual_obj_type'].upper()} w = {dual_info['dual_obj_str']}")
+        print(" Subject to:")
+        for c_str in dual_info['dual_constraints_str']:
+            print(f"   {c_str}")
+        print(f" Variable Bounds: {dual_info['dual_bounds_str']}")
+        print("=" * 82 + "\n")
+
     # Solve
-    result = run_full_solver(tableau, force_two_phase=args.two_phase, obj_type=obj_type)
+    lp_obj = lp if args.lp else None
+    result = run_full_solver(
+        tableau,
+        force_two_phase=args.two_phase,
+        obj_type=obj_type,
+        use_dual_simplex=args.dual_simplex,
+        lp=lp_obj
+    )
 
     # Execute SciPy linear programming solver / status check
-    lp_obj = lp if args.lp else None
     result["scipy"] = solve_with_scipy(tableau, lp=lp_obj, obj_type=obj_type)
 
     # Output according to format
@@ -1318,6 +2014,12 @@ Examples:
                 "solution_vector": {k: str(v) for k, v in result["solution"]["solution_vector"].items()},
                 "basic_vars": result["solution"]["basic_vars"]
             } if result["solution"] else None,
+            "duality": {
+                "dual_obj_type": result["duality"]["dual_obj_type"],
+                "dual_w": str(result["duality"]["dual_w"]),
+                "strong_duality_holds": result["duality"]["strong_duality_holds"],
+                "shadow_prices": {sp["var_name"]: str(sp["value"]) for sp in result["duality"]["shadow_prices"]}
+            } if result.get("duality") else None,
             "num_phases": len(result["phases"]),
             "iterations_per_phase": {p[0]: len(p[1]) for p in result["phases"]}
         }

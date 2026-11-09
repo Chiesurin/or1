@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>2D Cutting Plane Visualizer: Chvátal-Gomory Cuts</title>
+  <style>
+    :root {
+      --primary: #2563eb;
+      --bg: #0f172a;
+      --card: #1e293b;
+      --border: #334155;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --green: #22c55e;
+      --red: #ef4444;
+      --amber: #f59e0b;
+      --purple: #a855f7;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+    header {
+      background: #111827;
+      padding: 12px 24px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    h1 { font-size: 17px; font-weight: 700; color: #fff; }
+    .subtitle { font-size: 12px; color: var(--text-muted); }
+    .main-layout {
+      display: flex;
+      flex: 1;
+      height: calc(100vh - 54px);
+      overflow: hidden;
+    }
+    .canvas-panel {
+      flex: 1;
+      position: relative;
+      background: #020617;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+    .sidebar {
+      width: 440px;
+      background: var(--card);
+      border-left: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+    }
+    .section {
+      padding: 18px 20px;
+      border-bottom: 1px solid var(--border);
+    }
+    .section-title {
+      font-size: 13px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+      margin-bottom: 10px;
+    }
+    .badge {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .badge-green { background: rgba(34, 197, 94, 0.15); color: #4ade80; border: 1px solid #16a34a; }
+    .badge-amber { background: rgba(245, 158, 11, 0.15); color: #fcd34d; border: 1px solid #d97706; }
+    .badge-purple { background: rgba(168, 85, 247, 0.15); color: #d8b4fe; border: 1px solid #9333ea; }
+    .btn {
+      background: var(--primary);
+      color: white;
+      border: none;
+      padding: 8px 14px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+    .btn:hover { opacity: 0.9; }
+    .btn-secondary {
+      background: #334155;
+      color: #e2e8f0;
+    }
+    .btn-group {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .card-box {
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 14px;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .code-box {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      background: #0f172a;
+      padding: 6px 10px;
+      border-radius: 6px;
+      color: #38bdf8;
+      font-size: 12px;
+      margin-top: 4px;
+      border: 1px solid #1e293b;
+    }
+    svg {
+      width: 100%;
+      height: 100%;
+      max-width: 800px;
+      max-height: 800px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Integer Linear Programming & Chvátal-Gomory 2D Visualizer</h1>
+      <div class="subtitle">Cutting Plane Method Step-by-Step with Total Unimodularity (TUM) Analysis</div>
+    </div>
+    <div>
+      <span class="badge badge-purple">MAX 2*x1 + 3*x2</span>
+    </div>
+  </header>
+
+  <div class="main-layout">
+    <div class="canvas-panel">
+      <svg id="plot-svg" viewBox="-50 -50 700 700"></svg>
+    </div>
+
+    <div class="sidebar">
+      <!-- 1. TUM Analysis Section -->
+      <div class="section">
+        <div class="section-title">Pre-Solve: Total Unimodularity (TUM) Analysis</div>
+        <div class="card-box">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <strong>Matrix A Property:</strong>
+            <span class="badge badge-amber">
+              NOT CERTIFIED TUM
+            </span>
+          </div>
+          <div><strong>Polyhedron Status:</strong> Non-Ideal Polyhedron</div>
+          <div style="color: var(--text-muted); font-size: 12px; margin-top: 6px;">
+            Conclusion: Polyhedron is NOT guaranteed to be ideal. Cutting planes may be required.
+          </div>
+        </div>
+      </div>
+
+      <!-- 2. Step Navigator -->
+      <div class="section">
+        <div class="section-title">Cutting Plane Stepper</div>
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <span id="step-label" style="font-weight: 700; font-size: 14px; color: #38bdf8;">Continuous LP Relaxation</span>
+          <span id="step-counter" class="badge badge-amber">Step 0 of 3</span>
+        </div>
+        <div class="btn-group">
+          <button id="btn-prev" class="btn btn-secondary" onclick="prevStep()">Previous</button>
+          <button id="btn-next" class="btn" onclick="nextStep()">Next Cut</button>
+          <button class="btn btn-secondary" onclick="resetStep()">Reset</button>
+        </div>
+      </div>
+
+      <!-- 3. Current Cut Details -->
+      <div class="section" id="cut-info-section">
+        <div class="section-title">Current Cut Algebraic Derivation</div>
+        <div id="cut-info-body" class="card-box">
+          Select 'Next Cut' to visualize sequential Chvátal-Gomory planes.
+        </div>
+      </div>
+
+      <!-- 4. Solution Comparison -->
+      <div class="section">
+        <div class="section-title">Solution Comparison</div>
+        <div class="card-box" style="margin-bottom: 8px;">
+          <div style="color: #f87171; font-weight: 700;">Continuous Relaxation Optimum (x*_LP):</div>
+          <div>x1 = <code>103/26</code>, x2 = <code>21/13</code></div>
+          <div>Objective (MAX z): <code>166/13</code> (~12.77)</div>
+        </div>
+        <div class="card-box">
+          <div style="color: #4ade80; font-weight: 700;">Final Integer Optimum (x*_ILP):</div>
+          <div>x1 = <code>3</code>, x2 = <code>2</code></div>
+          <div>Objective (MAX z*): <code>12</code> (~12)</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const maxCoord = 6.0;
+    const svgSize = 600;
+    const originX = 50;
+    const originY = 550;
+    const scale = (svgSize - 100) / maxCoord;
+
+    function toSvgX(x) { return originX + x * scale; }
+    function toSvgY(y) { return originY - y * scale; }
+
+    const polygons = [{"step_name": "Continuous Relaxation (No Cuts)", "poly": [[0.0, 0.0], [4.5, 0.0], [3.96154, 1.61538], [0.0, 3.2]]}, {"step_name": "Cut 1: 3*x1 + 5*x2 <= 19", "poly": [[0.0, 0.0], [4.5, 0.0], [4.04167, 1.375], [3.0, 2.0], [0.0, 3.2]]}, {"step_name": "Cut 2: 6*x1 + 3*x2 <= 28", "poly": [[0.0, 0.0], [4.5, 0.0], [4.16667, 1.0], [3.95238, 1.42857], [3.0, 2.0], [0.0, 3.2]]}, {"step_name": "Cut 3: 4*x1 + 5*x2 <= 22", "poly": [[0.0, 0.0], [4.5, 0.0], [4.16667, 1.0], [4.11111, 1.11111], [3.0, 2.0], [0.0, 3.2]]}];
+    const intPoints = [{"x": 0, "y": 0, "in_initial_poly": true}, {"x": 0, "y": 1, "in_initial_poly": true}, {"x": 0, "y": 2, "in_initial_poly": true}, {"x": 0, "y": 3, "in_initial_poly": true}, {"x": 0, "y": 4, "in_initial_poly": false}, {"x": 0, "y": 5, "in_initial_poly": false}, {"x": 1, "y": 0, "in_initial_poly": true}, {"x": 1, "y": 1, "in_initial_poly": true}, {"x": 1, "y": 2, "in_initial_poly": true}, {"x": 1, "y": 3, "in_initial_poly": false}, {"x": 1, "y": 4, "in_initial_poly": false}, {"x": 1, "y": 5, "in_initial_poly": false}, {"x": 2, "y": 0, "in_initial_poly": true}, {"x": 2, "y": 1, "in_initial_poly": true}, {"x": 2, "y": 2, "in_initial_poly": true}, {"x": 2, "y": 3, "in_initial_poly": false}, {"x": 2, "y": 4, "in_initial_poly": false}, {"x": 2, "y": 5, "in_initial_poly": false}, {"x": 3, "y": 0, "in_initial_poly": true}, {"x": 3, "y": 1, "in_initial_poly": true}, {"x": 3, "y": 2, "in_initial_poly": true}, {"x": 3, "y": 3, "in_initial_poly": false}, {"x": 3, "y": 4, "in_initial_poly": false}, {"x": 3, "y": 5, "in_initial_poly": false}, {"x": 4, "y": 0, "in_initial_poly": true}, {"x": 4, "y": 1, "in_initial_poly": true}, {"x": 4, "y": 2, "in_initial_poly": false}, {"x": 4, "y": 3, "in_initial_poly": false}, {"x": 4, "y": 4, "in_initial_poly": false}, {"x": 4, "y": 5, "in_initial_poly": false}, {"x": 5, "y": 0, "in_initial_poly": false}, {"x": 5, "y": 1, "in_initial_poly": false}, {"x": 5, "y": 2, "in_initial_poly": false}, {"x": 5, "y": 3, "in_initial_poly": false}, {"x": 5, "y": 4, "in_initial_poly": false}, {"x": 5, "y": 5, "in_initial_poly": false}, {"x": 6, "y": 0, "in_initial_poly": false}, {"x": 6, "y": 1, "in_initial_poly": false}, {"x": 6, "y": 2, "in_initial_poly": false}, {"x": 6, "y": 3, "in_initial_poly": false}, {"x": 6, "y": 4, "in_initial_poly": false}, {"x": 6, "y": 5, "in_initial_poly": false}];
+    const cutsData = [{"index": 1, "generating_var": "x1", "formula_slack": "12/13*s1 + 5/26*s2 >= 25/26", "formula_orig": "3*x1 + 5*x2 <= 19", "c1": 3.0, "c2": 5.0, "rhs": 19.0}, {"index": 2, "generating_var": "x2", "formula_slack": "7/8*s2 + 1/4*s_cut1 >= 3/8", "formula_orig": "6*x1 + 3*x2 <= 28", "c1": 6.0, "c2": 3.0, "rhs": 28.0}, {"index": 3, "generating_var": "x1", "formula_slack": "6/7*s_cut1 + 5/21*s_cut2 >= 20/21", "formula_orig": "4*x1 + 5*x2 <= 22", "c1": 4.0, "c2": 5.0, "rhs": 22.0}];
+    const lpOpt = { x: 3.9615384615384617, y: 1.6153846153846154, val: 12.76923076923077 };
+    const ilpOpt = { x: 3.0, y: 2.0, val: 12.0 };
+
+    let currentStep = 0;
+
+    function renderPlot() {
+      const svg = document.getElementById('plot-svg');
+      let html = '';
+
+      // Grid lines
+      for (let i = 0; i <= maxCoord; i++) {
+        const sx = toSvgX(i);
+        const sy = toSvgY(i);
+        html += `<line x1="${sx}" y1="${toSvgY(0)}" x2="${sx}" y2="${toSvgY(maxCoord)}" stroke="#1e293b" stroke-width="1" />`;
+        html += `<line x1="${toSvgX(0)}" y1="${sy}" x2="${toSvgX(maxCoord)}" y2="${sy}" stroke="#1e293b" stroke-width="1" />`;
+        html += `<text x="${sx}" y="${originY + 18}" fill="#64748b" font-size="11" text-anchor="middle">${i}</text>`;
+        html += `<text x="${originX - 12}" y="${sy + 4}" fill="#64748b" font-size="11" text-anchor="end">${i}</text>`;
+      }
+
+      // Axes
+      html += `<line x1="${toSvgX(0)}" y1="${originY}" x2="${toSvgX(maxCoord)}" y2="${originY}" stroke="#94a3b8" stroke-width="2" />`;
+      html += `<line x1="${originX}" y1="${toSvgY(0)}" x2="${originX}" y2="${toSvgY(maxCoord)}" stroke="#94a3b8" stroke-width="2" />`;
+      html += `<text x="${toSvgX(maxCoord) + 12}" y="${originY + 4}" fill="#94a3b8" font-size="13" font-weight="bold">$x1</text>`;
+      html += `<text x="${originX}" y="${toSvgY(maxCoord) - 12}" fill="#94a3b8" font-size="13" font-weight="bold" text-anchor="middle">$x2</text>`;
+
+      // Initial continuous polygon (ghost outline)
+      const initPts = polygons[0].poly.map(p => `${toSvgX(p[0])},${toSvgY(p[1])}`).join(' ');
+      html += `<polygon points="${initPts}" fill="rgba(37, 99, 235, 0.08)" stroke="#3b82f6" stroke-dasharray="4,4" stroke-width="1.5" />`;
+
+      // Current Step Polygon
+      const curPts = polygons[currentStep].poly.map(p => `${toSvgX(p[0])},${toSvgY(p[1])}`).join(' ');
+      html += `<polygon points="${curPts}" fill="rgba(56, 189, 248, 0.22)" stroke="#38bdf8" stroke-width="2.5" />`;
+
+      // Draw all cuts up to currentStep
+      for (let c = 0; c < currentStep; c++) {
+        const cut = cutsData[c];
+        // Line: c1*x + c2*y = rhs
+        let p1, p2;
+        if (Math.abs(cut.c2) > 1e-6) {
+          p1 = { x: 0, y: cut.rhs / cut.c2 };
+          p2 = { x: maxCoord, y: (cut.rhs - cut.c1 * maxCoord) / cut.c2 };
+        } else {
+          p1 = { x: cut.rhs / cut.c1, y: 0 };
+          p2 = { x: cut.rhs / cut.c1, y: maxCoord };
+        }
+        html += `<line x1="${toSvgX(p1.x)}" y1="${toSvgY(p1.y)}" x2="${toSvgX(p2.x)}" y2="${toSvgY(p2.y)}" stroke="#f59e0b" stroke-width="2.5" />`;
+        // Label on line
+        const midX = (p1.x + p2.x) / 2;
+        const midY = (p1.y + p2.y) / 2;
+        if (midX >= 0 && midX <= maxCoord && midY >= 0 && midY <= maxCoord) {
+          html += `<text x="${toSvgX(midX)}" y="${toSvgY(midY) - 8}" fill="#f59e0b" font-size="11" font-weight="bold">Cut ${cut.index}</text>`;
+        }
+      }
+
+      // Integer grid points
+      intPoints.forEach(pt => {
+        const isFeas = pt.in_initial_poly;
+        const fill = isFeas ? '#38bdf8' : '#475569';
+        const r = isFeas ? 3.5 : 2;
+        html += `<circle cx="${toSvgX(pt.x)}" cy="${toSvgY(pt.y)}" r="${r}" fill="${fill}" opacity="${isFeas ? 1 : 0.4}" />`;
+      });
+
+      // LP Continuous Optimum
+      html += `<circle cx="${toSvgX(lpOpt.x)}" cy="${toSvgY(lpOpt.y)}" r="6" fill="#ef4444" stroke="#ffffff" stroke-width="2" />`;
+      html += `<text x="${toSvgX(lpOpt.x) + 8}" y="${toSvgY(lpOpt.y) - 8}" fill="#f87171" font-size="12" font-weight="bold">x*_LP (${lpOpt.x.toFixed(2)}, ${lpOpt.y.toFixed(2)})</text>`;
+
+      // If at last step or optimal integer reached, highlight integer optimum
+      if (currentStep === cutsData.length) {
+        html += `<circle cx="${toSvgX(ilpOpt.x)}" cy="${toSvgY(ilpOpt.y)}" r="7" fill="#22c55e" stroke="#ffffff" stroke-width="2.5" />`;
+        html += `<text x="${toSvgX(ilpOpt.x) + 8}" y="${toSvgY(ilpOpt.y) + 16}" fill="#4ade80" font-size="12" font-weight="bold">x*_ILP (${ilpOpt.x}, ${ilpOpt.y})</text>`;
+      }
+
+      svg.innerHTML = html;
+      updateSidebar();
+    }
+
+    function updateSidebar() {
+      const total = cutsData.length;
+      document.getElementById('step-counter').textContent = `Step ${currentStep} of ${total}`;
+      document.getElementById('btn-prev').disabled = (currentStep === 0);
+      document.getElementById('btn-next').disabled = (currentStep === total);
+
+      if (currentStep === 0) {
+        document.getElementById('step-label').textContent = "Continuous LP Relaxation";
+        document.getElementById('cut-info-body').innerHTML = `
+          <div><strong>Base Problem:</strong> Continuous relaxation solved to optimality via Simplex.</div>
+          <div style="margin-top: 6px;">Continuous optimum is fractional: <code>$x1 = ${lpOpt.x.toFixed(3)}, $x2 = ${lpOpt.y.toFixed(3)}</code>.</div>
+          <div style="color: var(--amber); margin-top: 6px;">Chvátal-Gomory cuts are required to slice off the non-integer optimum while preserving all lattice points Z^2.</div>
+        `;
+      } else {
+        const cut = cutsData[currentStep - 1];
+        document.getElementById('step-label').textContent = `Cut ${cut.index} Applied`;
+        document.getElementById('cut-info-body').innerHTML = `
+          <div><strong>Generating Variable:</strong> <code>${cut.generating_var}</code></div>
+          <div style="margin-top: 6px;"><strong>Tableau Slack Form:</strong></div>
+          <div class="code-box">${cut.formula_slack}</div>
+          <div style="margin-top: 6px;"><strong>Original Decision Variables Form:</strong></div>
+          <div class="code-box" style="color: #4ade80;">${cut.formula_orig}</div>
+          <div style="margin-top: 6px; font-size: 12px; color: var(--text-muted);">
+            Notice how the yellow cut hyperplane strictly separates the fractional point x*_LP without eliminating any blue integer lattice points!
+          </div>
+        `;
+      }
+    }
+
+    function nextStep() {
+      if (currentStep < cutsData.length) {
+        currentStep++;
+        renderPlot();
+      }
+    }
+
+    function prevStep() {
+      if (currentStep > 0) {
+        currentStep--;
+        renderPlot();
+      }
+    }
+
+    function resetStep() {
+      currentStep = 0;
+      renderPlot();
+    }
+
+    // Initial render
+    renderPlot();
+  </script>
+</body>
+</html>

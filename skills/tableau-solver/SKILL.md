@@ -31,7 +31,15 @@ This skill enables an LLM agent to reliably solve any Simplex tableau or Linear 
 4. **Two-Phase Simplex**:
    - Automatic when negative RHS or equality/$\ge$ constraints exist, or explicitly requested via `--two-phase`.
    - Phase 1 drives artificial variables $y_1, \dots, y_m$ to 0. Phase 2 restores and optimizes the original objective.
-5. **Full Calculation Trace**:
+5. **Dual Simplex Algorithm (`--dual-simplex`)**:
+   - Solves dual-feasible tableaus (all reduced costs in Row 0 satisfy $c_j \ge 0$) with negative RHS entries ($b_i < 0$).
+   - Pivots by selecting leaving variable $R_l$ with most negative RHS, then performing the dual minimum ratio test $\min_{j: a_{lj} < 0} (c_j / |a_{lj}|)$ to pick the entering variable.
+6. **Dual Problem Formulation & Duality Theorems (`--show-dual`)**:
+   - Automatically formulates the mathematical dual Linear Program from primal LP formulations (min $\leftrightarrow$ max, transposed constraint matrix $A^T$, dual variable bounds according to primal constraint types).
+   - Computes exact shadow prices (dual variables $y^* = c_B^T B^{-1}$) from Row 0 reduced costs and basis inversion.
+   - Verifies **Strong Duality Theorem** ($z^*_{\text{primal}} == w^*_{\text{dual}}$).
+   - Verifies **Complementary Slackness Theorem** ($y_i^* \cdot s_i = 0$ for primal slacks, $x_j^* \cdot \bar{c}_j = 0$ for dual slacks).
+7. **Full Calculation Trace**:
    - Explicitly records every step:
      - Optimality test (Row 0 inspection)
      - Bland candidate selection
@@ -105,6 +113,8 @@ Present the output cleanly to the user:
 | `--stdin` | Read raw tableau text from standard input pipe. |
 | `--lp "<text>"` | Parse standard Linear Program formulation text (min/max, constraints). |
 | `--two-phase` | Force Two-Phase Simplex even if an initial slack basis exists. |
+| `--dual-simplex` | Solve using the Dual Simplex algorithm (requires dual-feasible tableau $c_j \ge 0$). |
+| `--show-dual` | Formulate and display the mathematical dual Linear Program. |
 | `--output-md <path>` | Export complete, publication-grade solution report to a Markdown `.md` file. |
 | `--format {text,markdown,json}` | Output format in terminal stdout (default: `text`). |
 | `--verify-scipy` | Cross-validate optimal objective value with `scipy.optimize.linprog` if available. |
