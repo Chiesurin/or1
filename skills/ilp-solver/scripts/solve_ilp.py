@@ -1264,7 +1264,7 @@ def generate_2d_html_visualizer(
         document.getElementById('step-label').textContent = "Continuous LP Relaxation";
         document.getElementById('cut-info-body').innerHTML = `
           <div><strong>Base Problem:</strong> Continuous relaxation solved to optimality via Simplex.</div>
-          <div style="margin-top: 6px;">Continuous optimum is fractional: <code>${lp.var_names[0]} = ${{lpOpt.x.toFixed(3)}}, ${lp.var_names[1]} = ${{lpOpt.y.toFixed(3)}}</code>.</div>
+          <div style="margin-top: 6px;">Continuous optimum is fractional: <code>{lp.var_names[0]} = ${{lpOpt.x.toFixed(3)}}, {lp.var_names[1]} = ${{lpOpt.y.toFixed(3)}}</code>.</div>
           <div style="color: var(--amber); margin-top: 6px;">Chvátal-Gomory cuts are required to slice off the non-integer optimum while preserving all lattice points Z^2.</div>
         `;
       }} else {{
@@ -1319,27 +1319,71 @@ def generate_2d_html_visualizer(
 
 def parse_lp_input(text: str) -> LinearProgram:
     """
-    Parses a standard algebraic LP formulation string:
+    Parses a standard algebraic LP formulation string (multiline or single-line with ';' and 's.t.'):
     min/max c1*x1 + c2*x2
     s.t.
     a11*x1 + a12*x2 <= b1
     ...
     """
-    lines = [line.strip() for line in text.strip().splitlines() if line.strip() and not line.strip().startswith("#")]
+    raw_lines = [line.strip() for line in text.strip().splitlines() if line.strip() and not line.strip().startswith("#")]
+    lines: List[str] = []
+    for raw_line in raw_lines:
+        if re.search(r'(?:s\.?t\.?:?|subject\s+to:?)', raw_line, re.I):
+            parts = re.split(r'(?:s\.?t\.?:?|subject\s+to:?)', raw_line, maxsplit=1, flags=re.I)
+            before = parts[0].strip()
+            after = parts[1].strip() if len(parts) > 1 else ""
+            if before:
+                lines.extend([p.strip() for p in before.split(";") if p.strip()])
+            if after:
+                lines.extend([p.strip() for p in after.split(";") if p.strip()])
+        elif ";" in raw_line:
+            lines.extend([p.strip() for p in raw_line.split(";") if p.strip()])
+        else:
+            lines.append(raw_line)
+
     if len(lines) < 2:
         raise ValueError("LP formulation requires at least 1 objective line and 1 constraint line.")
 
     # 1. Objective
-    obj_line = lines[0].lower()
-    m_obj = re.match(r'^(min(?:imize)?|max(?:imize)?)\s+(.+)$', obj_line)
+    obj_line = lines[0]
+    m_obj = re.match(r'^(min(?:imize)?|max(?:imize)?)\s+(?:[a-zA-Z]\s*=\s*)?(.+)$', obj_line, re.I)
     if not m_obj:
         raise ValueError(f"Could not parse objective line: '{lines[0]}'")
-    obj_type = "min" if "min" in m_obj.group(1) else "max"
+    obj_type = "min" if "min" in m_obj.group(1).lower() else "max"
     obj_expr = m_obj.group(2)
 
-    var_tokens = sorted(list(set(re.findall(r'[a-zA-Z]\w*', obj_expr))))
+    # 2. Collect constraint lines & gather all decision variables across objective and constraint LHS
+    raw_var_tokens = set(re.findall(r'[a-zA-Z]\w*', obj_expr))
+    parsed_raw_constraints: List[Tuple[str, str, Fraction]] = []
+
+    for line_clean in lines[1:]:
+        if not line_clean:
+            continue
+        # Skip pure variable non-negativity declarations like 'x1, x2 >= 0'
+        if re.match(r'^[a-zA-Z]\w*(?:\s*,\s*[a-zA-Z]\w*)*\s*>=\s*0$', line_clean):
+            continue
+
+        m_rel = re.search(r'(<=|>=|=)', line_clean)
+        if not m_rel:
+            continue
+        rel = m_rel.group(1)
+        lhs, rhs = line_clean.split(rel, 1)
+        raw_var_tokens.update(re.findall(r'[a-zA-Z]\w*', lhs))
+        parsed_raw_constraints.append((lhs, rel, parse_fraction(rhs)))
+
+    if not parsed_raw_constraints:
+        raise ValueError("LP formulation requires at least 1 valid constraint line.")
+
+    def var_sort_key(name: str):
+        m = re.match(r'^([a-zA-Z]+)(\d+)?(.*)$', name)
+        if m:
+            prefix, num, rest = m.groups()
+            return (prefix, int(num) if num else 0, rest)
+        return (name, 0, "")
+
+    var_tokens = sorted(raw_var_tokens, key=var_sort_key)
     if not var_tokens:
-        raise ValueError("No decision variables found in objective.")
+        raise ValueError("No decision variables found in LP formulation.")
 
     def parse_expr(expr: str, variables: List[str]) -> List[Fraction]:
         coeffs = {v: Fraction(0) for v in variables}
@@ -1347,8 +1391,9 @@ def parse_lp_input(text: str) -> LinearProgram:
         terms = [t.strip() for t in clean_expr.split('+') if t.strip()]
         for term in terms:
             for v in variables:
-                if re.search(r'\b' + v + r'\b', term):
-                    c_str = re.sub(r'\*?' + v, '', term).strip()
+                if re.search(r'\b' + re.escape(v) + r'\b', term):
+                    c_str = re.sub(r'\s*\*?\s*\b' + re.escape(v) + r'\b', '', term)
+                    c_str = re.sub(r'\s+', '', c_str)
                     if c_str == '' or c_str == '+':
                         coeffs[v] += Fraction(1)
                     elif c_str == '-':
@@ -1359,29 +1404,10 @@ def parse_lp_input(text: str) -> LinearProgram:
         return [coeffs[v] for v in variables]
 
     obj_coeffs = parse_expr(obj_expr, var_tokens)
-
-    # 2. Constraints
-    constraints = []
-    c_lines = lines[1:]
-    if c_lines and ("s.t." in c_lines[0].lower() or "subject to" in c_lines[0].lower()):
-        c_lines = c_lines[1:]
-
-    for line in c_lines:
-        line_clean = line.strip()
-        if not line_clean:
-            continue
-        # Skip pure bounds like x1, x2 >= 0
-        if re.match(r'^[a-zA-Z0-9_,\s]+>=\s*0$', line_clean):
-            continue
-
-        m_rel = re.search(r'(<=|>=|=)', line_clean)
-        if not m_rel:
-            continue
-        rel = m_rel.group(1)
-        lhs, rhs = line_clean.split(rel)
-        lhs_coeffs = parse_expr(lhs, var_tokens)
-        rhs_val = parse_fraction(rhs)
-        constraints.append((lhs_coeffs, rel, rhs_val))
+    constraints = [
+        (parse_expr(lhs, var_tokens), rel, rhs_val)
+        for lhs, rel, rhs_val in parsed_raw_constraints
+    ]
 
     return LinearProgram(obj_type, obj_coeffs, constraints, var_names=var_tokens)
 

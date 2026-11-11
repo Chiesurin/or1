@@ -335,11 +335,24 @@ class LinearProgram:
     def to_tableau(self, allow_negative_rhs: bool = False) -> Tuple[SimplexTableau, bool]:
         """Converts the Linear Program to standard form and creates the initial SimplexTableau."""
         norm_constraints = []
+        dual_flipped = []
         for coeffs, rel, rhs in self.constraints:
             c_list = list(coeffs)
             r_rel = rel
             r_rhs = rhs
-            if not allow_negative_rhs and r_rhs < 0:
+            flipped = False
+            if allow_negative_rhs:
+                if r_rel == "=":
+                    raise ValueError(
+                        "Dual Simplex with --lp supports inequality constraints (<= and >=). "
+                        "Use standard Two-Phase Simplex (omit --dual-simplex) for equality (=) constraints."
+                    )
+                if r_rel == ">=":
+                    c_list = [-c for c in c_list]
+                    r_rhs = -r_rhs
+                    r_rel = "<="
+                    flipped = True
+            elif r_rhs < 0:
                 c_list = [-c for c in c_list]
                 r_rhs = -r_rhs
                 if r_rel == "<=":
@@ -347,6 +360,7 @@ class LinearProgram:
                 elif r_rel == ">=":
                     r_rel = "<="
             norm_constraints.append((c_list, r_rel, r_rhs))
+            dual_flipped.append(flipped)
 
         needs_phase1 = False if allow_negative_rhs else (self.force_two_phase or any(rel in (">=", "=") for _, rel, _ in norm_constraints))
 
@@ -361,11 +375,11 @@ class LinearProgram:
         slacks: List[str] = []
         surpluses: List[str] = []
         artificials: List[str] = []
-        constraint_aux: List[Dict[str, Optional[str]]] = []
+        constraint_aux: List[Dict[str, Any]] = []
 
-        for coeffs, rel, rhs in norm_constraints:
-            aux: Dict[str, Optional[str]] = {"slack": None, "surplus": None, "artificial": None}
-            if rel == "<=":
+        for idx, (coeffs, rel, rhs) in enumerate(norm_constraints):
+            aux: Dict[str, Any] = {"slack": None, "surplus": None, "artificial": None, "dual_flipped": dual_flipped[idx]}
+            if rel == "<=" and not dual_flipped[idx]:
                 s_name = f"x{next_x_idx}"
                 next_x_idx += 1
                 slacks.append(s_name)
@@ -375,6 +389,11 @@ class LinearProgram:
                     artificial_counter += 1
                     artificials.append(y_name)
                     aux["artificial"] = y_name
+            elif rel == "<=" and dual_flipped[idx]:
+                e_name = f"e{surplus_counter}"
+                surplus_counter += 1
+                surpluses.append(e_name)
+                aux["surplus"] = e_name
             elif rel == ">=":
                 e_name = f"e{surplus_counter}"
                 surplus_counter += 1
@@ -410,7 +429,11 @@ class LinearProgram:
                     basic_vars.append(aux["slack"])
             if aux["surplus"]:
                 col = full_var_names.index(aux["surplus"])
-                row[col] = Fraction(-1)
+                if aux["dual_flipped"]:
+                    row[col] = Fraction(1)
+                    basic_vars.append(aux["surplus"])
+                else:
+                    row[col] = Fraction(-1)
             if aux["artificial"]:
                 col = full_var_names.index(aux["artificial"])
                 row[col] = Fraction(1)
@@ -1040,7 +1063,8 @@ def extract_duality_analysis(
     final_tab: SimplexTableau,
     primal_sol: Optional[Dict[str, Any]],
     obj_type: str = "min",
-    lp: Optional[LinearProgram] = None
+    lp: Optional[LinearProgram] = None,
+    initial_tab: Optional[SimplexTableau] = None
 ) -> Optional[Dict[str, Any]]:
     """
     Extracts shadow prices (dual variables y* = c_B^T B^-1) from Row 0 of the optimal tableau
@@ -1168,22 +1192,111 @@ def extract_duality_analysis(
     else:
         dual_prob = None
         dual_obj_type = "max" if obj_type == "min" else "min"
-        y_star = []
-        for r in range(1, final_tab.num_rows()):
-            b_var = final_tab.basic_vars[r - 1]
-            val = final_tab.tableau[0][final_tab.var_indices.get(b_var, r) - 1] if r - 1 < len(final_tab.var_names) else Fraction(0)
-            y_star.append(val)
-            shadow_prices.append({
-                "var_name": f"y{r}",
-                "constraint_idx": r,
-                "constraint_desc": f"Row {r} ({b_var})",
-                "value": val,
-                "value_approx": format_approx(val),
-                "slack_name": f"s{r}",
-                "slack_val": Fraction(0),
-                "slack_desc": f"s{r} = 0"
-            })
+        y_star: Optional[List[Fraction]] = None
         dual_w = primal_z
+
+        if initial_tab is not None:
+            m_init = initial_tab.num_rows() - 1
+            n_init = initial_tab.num_cols()
+            c_init = (
+                list(initial_tab.orig_row0[:n_init])
+                if initial_tab.orig_row0 is not None
+                else list(initial_tab.tableau[0][:n_init])
+            )
+            r0_shift = (
+                initial_tab.orig_row0[-1]
+                if initial_tab.orig_row0 is not None
+                else initial_tab.tableau[0][-1]
+            )
+
+            sol_map = {name: Fraction(0) for name in initial_tab.var_names}
+            for r_idx in range(1, final_tab.num_rows()):
+                b_var = final_tab.basic_vars[r_idx - 1]
+                sol_map[b_var] = final_tab.tableau[r_idx][-1]
+
+            # Solve B^T y = c_B from the initial tableau's constraint matrix and objective vector
+            if len(final_tab.basic_vars) == m_init and m_init > 0:
+                B_mat: List[List[Fraction]] = []
+                c_B: List[Fraction] = []
+                basis_ok = True
+                for b_var in final_tab.basic_vars:
+                    if b_var in initial_tab.var_names:
+                        col_idx = initial_tab.var_names.index(b_var)
+                        B_mat.append([initial_tab.tableau[r][col_idx] for r in range(1, m_init + 1)])
+                        c_B.append(c_init[col_idx])
+                    else:
+                        basis_ok = False
+                        break
+                if basis_ok:
+                    y_star_min = solve_linear_system_exact(B_mat, c_B)
+                    if y_star_min is not None:
+                        y_star = [-y for y in y_star_min] if obj_type == "max" else y_star_min
+
+            if y_star is not None:
+                sign_factor = Fraction(-1) if obj_type == "max" else Fraction(1)
+                dual_w = sum(initial_tab.tableau[r][-1] * y_star[r - 1] for r in range(1, m_init + 1)) - sign_factor * r0_shift
+                for r in range(1, m_init + 1):
+                    y_val = y_star[r - 1]
+                    rhs_r = initial_tab.tableau[r][-1]
+                    # Identify explicit unit slack column for row r if present
+                    slack_var = None
+                    for col_idx in range(n_init - 1, -1, -1):
+                        if (
+                            c_init[col_idx] == 0
+                            and initial_tab.tableau[r][col_idx] == 1
+                            and all(initial_tab.tableau[other][col_idx] == 0 for other in range(1, m_init + 1) if other != r)
+                        ):
+                            slack_var = initial_tab.var_names[col_idx]
+                            break
+                    slack_name = slack_var if slack_var else f"eq_{r}"
+                    slack_val = sol_map.get(slack_var, Fraction(0)) if slack_var else Fraction(0)
+                    slack_desc = f"{slack_name} = {format_fraction(slack_val)}"
+                    shadow_prices.append({
+                        "var_name": f"y{r}",
+                        "constraint_idx": r,
+                        "constraint_desc": f"Row {r} (b={format_fraction(rhs_r)})",
+                        "value": y_val,
+                        "value_approx": format_approx(y_val),
+                        "slack_name": slack_name,
+                        "slack_val": slack_val,
+                        "slack_desc": slack_desc
+                    })
+                    if slack_var:
+                        prod = y_val * slack_val
+                        comp_slackness.append({
+                            "type": "Primal Slackness",
+                            "desc": f"y{r} * {slack_var}",
+                            "calc": f"{format_fraction(y_val)} * {format_fraction(slack_val)} = {format_fraction(prod)}",
+                            "satisfied": prod == 0
+                        })
+
+                for col_idx, v_name in enumerate(initial_tab.var_names):
+                    x_val = sol_map.get(v_name, Fraction(0))
+                    dual_lhs = sum(initial_tab.tableau[r][col_idx] * y_star[r - 1] for r in range(1, m_init + 1))
+                    dual_rhs = -c_init[col_idx] if obj_type == "max" else c_init[col_idx]
+                    dual_slack = abs(dual_rhs - dual_lhs)
+                    prod = x_val * dual_slack
+                    comp_slackness.append({
+                        "type": "Dual Slackness",
+                        "desc": f"{v_name} * DualSlack_{v_name}",
+                        "calc": f"{format_fraction(x_val)} * {format_fraction(dual_slack)} = {format_fraction(prod)}",
+                        "satisfied": prod == 0
+                    })
+
+        if y_star is None:
+            for r in range(1, final_tab.num_rows()):
+                b_var = final_tab.basic_vars[r - 1]
+                val = Fraction(0)
+                shadow_prices.append({
+                    "var_name": f"y{r}",
+                    "constraint_idx": r,
+                    "constraint_desc": f"Row {r} ({b_var})",
+                    "value": val,
+                    "value_approx": format_approx(val),
+                    "slack_name": f"s{r}",
+                    "slack_val": Fraction(0),
+                    "slack_desc": f"s{r} = 0"
+                })
 
     strong_duality_holds = (primal_z == dual_w)
 
@@ -1218,7 +1331,7 @@ def run_full_solver(
                 "error_message": "Tableau is not dual-feasible: Row 0 has negative reduced costs (c_j < 0). Dual Simplex requires an initial dual-feasible tableau (all c_j >= 0)."
             }
         status, steps, final_tab = solve_dual_simplex_with_calculations(tab, phase_name="Dual Simplex", obj_type=obj_type)
-        return build_solution_dict(status, [("Dual Simplex", steps)], final_tab, tab.var_names, obj_type, lp=lp)
+        return build_solution_dict(status, [("Dual Simplex", steps)], final_tab, tab.var_names, obj_type, lp=lp, initial_tab=tab)
 
     m = tab.num_rows() - 1
     needs_phase1 = force_two_phase or tab.obj_name == "-w" or any(v.startswith("y") for v in tab.var_names)
@@ -1230,7 +1343,7 @@ def run_full_solver(
 
     if not needs_phase1:
         status, steps, final_tab = solve_simplex_with_calculations(tab, obj_type=obj_type)
-        return build_solution_dict(status, [("Simplex", steps)], final_tab, tab.var_names, obj_type, lp=lp)
+        return build_solution_dict(status, [("Simplex", steps)], final_tab, tab.var_names, obj_type, lp=lp, initial_tab=tab)
 
     # -----------------------------------------------------------------
     # TWO-PHASE SIMPLEX
@@ -1358,12 +1471,13 @@ def run_full_solver(
     )
 
     all_phases = [("Phase 1", p1_steps), ("Phase 2", p2_steps)]
-    return build_solution_dict(p2_status, all_phases, final_tab, original_var_names, obj_type, lp=lp)
+    return build_solution_dict(p2_status, all_phases, final_tab, original_var_names, obj_type, lp=lp, initial_tab=tab)
 
 
 def build_solution_dict(status: str, phase_steps: List[Tuple[str, List[Any]]],
                         final_tab: SimplexTableau, original_var_names: List[str],
-                        obj_type: str, lp: Optional[LinearProgram] = None) -> Dict[str, Any]:
+                        obj_type: str, lp: Optional[LinearProgram] = None,
+                        initial_tab: Optional[SimplexTableau] = None) -> Dict[str, Any]:
     """Assembles the final dictionary with solution vector, objective value, duality analysis, and full steps."""
     result: Dict[str, Any] = {
         "status": status,
@@ -1390,7 +1504,9 @@ def build_solution_dict(status: str, phase_steps: List[Tuple[str, List[Any]]],
             "solution_vector": sol_vector,
             "basic_vars": list(final_tab.basic_vars)
         }
-        result["duality"] = extract_duality_analysis(final_tab, result["solution"], obj_type=obj_type, lp=lp)
+        result["duality"] = extract_duality_analysis(
+            final_tab, result["solution"], obj_type=obj_type, lp=lp, initial_tab=initial_tab
+        )
     return result
 
 

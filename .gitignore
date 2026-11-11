@@ -5,3 +5,8 @@
 __pycache__/
 *.py[cod]
 *$py.class
+.venv/
+venv/
+
+# Generated test outputs
+skills/tableau-solver/examples/test_twophase_solution.md

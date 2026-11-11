@@ -1,122 +1,280 @@
-# Simplex Method with Bland's Rule in Python (CLI & Web GUI)
+# OR1: Operations Research Linear & Integer Programming Toolkit
 
-A complete, exact implementation of the **Simplex Algorithm** in pure Python using **Bland's Smallest-Subscript Rule** to prevent cycling and guarantee finite convergence to optimality.
+**OR1** (*Operations Research 1*) is an open-source, exact-arithmetic toolkit for solving, verifying, and visualizing **Linear Programming (LP)** and **Integer Linear Programming (ILP)** problems.
 
-Includes both a **Terminal CLI** and a modern, responsive, dependency-free **Web GUI Visualizer** served via Python's standard `http.server`.
+It combines a self-contained **Web GUI Visualizer & REST API**, a **Terminal CLI**, and two deterministic **AI Agent Skills** built around exact rational arithmetic (`fractions.Fraction`), **Bland's anti-cycling rule**, **Two-Phase Simplex**, **LP Duality & Dual Simplex**, **Total Unimodularity (TUM)** analysis, and **Chvátal-Gomory cutting planes**.
 
 ---
 
-## AI / Agent Quick Reference Summary
+## Core Capabilities
 
-> **Context for AI Agents & Automated Tools:**
-> - **Language & Runtime:** Python 3 (3.8+). Zero external third-party dependencies (`pip install` not required; uses only standard library: `fractions`, `http.server`, `urllib`, `json`, `csv`, `glob`, `socket`, `webbrowser`).
-> - **Arithmetic Engine:** Exact rational arithmetic via `fractions.Fraction`. All calculations (pivot operations, reduced costs, ratio tests) are exact with no floating-point rounding errors.
-> - **Primary Source File:** [`source/gui.py`](source/gui.py) contains both the Simplex engine, CLI runner, and the self-contained HTML/CSS/JS single-page web GUI.
-> - **CSV Tableaus Directory:** [`csv/`](csv/) holds standard CSV-formatted tableaus.
-> - **Optimization Direction:** The solver universally minimizes $z$ ($\min z$). Maximization problems $\max c^T x$ are converted via $\min -c^T x$.
-> - **Row 0 Convention:** Tableau Row 0 is labeled `-z` (or `-w` during Phase 1). The internal equation is $-z + \sum \bar{c}_j x_j = \text{RHS}_0$, meaning the true objective value is $z = -\text{RHS}_0$.
-> - **Tableau Layout:** Column headers are ordered as `Basis, RHS, x1, x2, ...` with **no dedicated $z$ column** and RHS on the left.
-> - **Anti-Cycling Guarantee:** Employs Bland's smallest-index rule for both entering and leaving variable selection to avoid degenerate cycling (verified against Beale's 1955 cycling problem).
+- **Exact Rational Arithmetic**: Uses Python's built-in `fractions.Fraction` across every pivot, ratio test, dual inversion, and cutting plane. Eliminates floating-point drift (e.g., `103/26`, `-11/2`, `17/5`).
+- **Anti-Cycling Simplex & Two-Phase Engine**: Implements Bland's smallest-subscript rule for both entering and leaving variable ties (verified on Beale's 1955 cycling benchmark), plus automatic or forced Two-Phase Simplex with artificial variables `y1, y2, ...`.
+- **Duality Theory & Dual Simplex**:
+  - Automatic formulation of the mathematical dual problem ($\min \leftrightarrow \max$, transposed $A^T$, exact sign/free bounds).
+  - Exact shadow price computation via basis inversion ($B^T y^* = c_B$) for both `--lp` and `--csv`/`--raw` tableaus.
+  - Explicit verification of **Strong Duality** ($z^* = w^*$) and **Complementary Slackness**.
+  - Full step-by-step **Dual Simplex** execution for dual-feasible tableaus ($c_j \ge 0$) with negative RHS entries.
+- **Integer Linear Programming (ILP) Cutting Planes & TUM Analysis**:
+  - Pre-solve **Total Unimodularity (TUM)** inspection: checks entry necessity ($a_{ij} \in \{-1, 0, 1\}$), Poincaré / Heller-Tompkins network criteria, Consecutive Ones (interval matrix) property, and Bareiss exact submatrix determinants.
+  - **Hoffman-Kruskal Theorem** evaluation to identify Ideal Polyhedra ($P = P_I$) before introducing cuts.
+  - **Chvátal-Gomory fractional cuts** derived both in tableau slack form and re-projected into original decision variables, followed by Dual Simplex re-optimization.
+  - **Interactive 2D HTML/SVG Plotter** showing the continuous LP polyhedron, integer lattice points ($\mathbb{Z}^2$), step-by-step cutting hyperplanes, continuous optimum $x^*_{\text{LP}}$, and integer optimum $x^*_{\text{ILP}}$.
+- **Optional SciPy Cross-Verification**: Runs with zero mandatory third-party packages; when `scipy` and `numpy` are installed, solutions are automatically cross-checked against HiGHS (`scipy.optimize.linprog` and `scipy.optimize.milp`).
+- **Publication-Ready Exports**: Generates standalone Markdown walkthroughs (`--output-md`) and interactive single-file HTML visualizations (`--visualize-2d`).
+
+---
+
+## Requirements
+
+- **Runtime**: Python 3.8 or newer.
+- **Mandatory Dependencies**: None (Python Standard Library only).
+- **Optional Dependencies** (for HiGHS cross-verification):
+
+```bash
+pip3 install --user scipy numpy
+```
+
+---
+
+## Quick Start
+
+```bash
+# 1. Launch the Interactive Web GUI (opens http://127.0.0.1:5050)
+python3 source/gui.py
+
+# 2. Solve a CSV tableau directly in the terminal
+python3 source/gui.py csv/tableau.csv --cli
+
+# 3. Solve an LP with Dual formulation, Shadow Prices, and SciPy verification
+python3 skills/tableau-solver/scripts/solve_tableau.py \
+  --lp "min 4*x1 + x2 s.t. 3*x1 + x2 = 3; 4*x1 + 3*x2 >= 6; x1 + 2*x2 <= 4; x1, x2 >= 0" \
+  --show-dual --verify-scipy
+
+# 4. Solve a 2D ILP with TUM check, Gomory cuts, and generate an interactive 2D HTML plot
+python3 skills/ilp-solver/scripts/solve_ilp.py \
+  --lp "max 2*x1 + 3*x2 s.t. 2*x1 + 5*x2 <= 16; 6*x1 + 2*x2 <= 27; x1, x2 >= 0" \
+  --visualize-2d cuts_2d.html --verify-scipy
+```
 
 ---
 
 ## Repository Structure
 
-```
+```text
 .
 ├── .agents/
-│   └── skills/
-│       └── tableau-solver -> ../../skills/tableau-solver  # Antigravity auto-discovered skill
-├── .gitignore              # Ignores .DS_Store, __pycache__, bytecode
-├── INSTRUCTIONS.md         # Comprehensive human guide (in English)
-├── LICENSE                 # Project license (MIT)
-├── README.md               # Complete documentation and AI reference guide
-├── csv/                    # Simplex initial tableau CSV files
-│   ├── example_standard.csv # Standard 2D textbook LP problem
-│   └── tableau.csv         # Beale's classic cycling problem (1955)
-├── skills/                 # AI / LLM Agent Skills
-│   └── tableau-solver/     # Modular tableau solver skill for AI agents
-│       ├── SKILL.md        # Agent instruction runbook & prompt interface
-│       ├── scripts/
-│       │   └── solve_tableau.py # Standalone solver & calculation engine
-│       ├── examples/       # Sample tableaus, prompts, and solution markdown
-│       └── references/     # Mathematical derivations and input specifications
-└── source/                 # Python source files
-    └── gui.py              # Core solver engine, REST API, CLI, and Web GUI
+│   └── skills/                         # Auto-discovery skill symlinks for AI coding agents
+│       ├── ilp-solver -> ../../skills/ilp-solver
+│       └── tableau-solver -> ../../skills/tableau-solver
+├── .gitattributes
+├── .gitignore
+├── INSTRUCTIONS.md                     # Detailed user guide and learning walkthrough
+├── LICENSE                             # MIT License
+├── README.md                           # Project overview, specs, CLI & API reference
+├── csv/                                # Sample initial Simplex tableau datasets
+│   ├── example_standard.csv            # Standard 2D minimization tableau (opt z* = -33)
+│   └── tableau.csv                     # Beale's 1955 cycling benchmark (opt z* = -1)
+├── skills/
+│   ├── ilp-solver/                     # ILP TUM + Chvátal-Gomory cutting plane skill
+│   │   ├── SKILL.md                    # Agent specification and workflow
+│   │   ├── examples/
+│   │   │   ├── gomory_2d.lp            # Classical 2D non-TUM ILP example
+│   │   │   ├── gomory_2d_viz.html      # Interactive 2D cut visualization HTML output
+│   │   │   └── tum_network.lp          # Ideal polyhedron (TUM) benchmark example
+│   │   ├── references/
+│   │   │   ├── gomory_cuts.md          # Chvátal-Gomory & Dual Simplex derivation notes
+│   │   │   └── total_unimodularity.md  # TUM criteria & Hoffman-Kruskal reference
+│   │   └── scripts/
+│   │       └── solve_ilp.py            # Deterministic ILP, TUM & 2D SVG/HTML engine
+│   └── tableau-solver/                 # LP Simplex, Two-Phase & Duality agent skill
+│       ├── SKILL.md                    # Agent specification and workflow
+│       ├── examples/
+│       │   ├── input_inline_prompt.txt # Sample inline prompt input
+│       │   ├── sample_solution.md      # Sample exported Markdown walkthrough
+│       │   ├── sample_tableau.csv      # 2D textbook tableau (opt z* = -36)
+│       │   └── test_run.sh             # End-to-end verification shell script
+│       ├── references/
+│       │   ├── input_formats.md        # Accepted CSV and LP syntax specifications
+│       │   └── simplex_cheatsheet.md   # Mathematical conventions & pivoting rules
+│       └── scripts/
+│           └── solve_tableau.py        # Deterministic Simplex, Two-Phase & Duality engine
+└── source/
+    └── gui.py                          # Standalone Web GUI server, REST API & CSV CLI
 ```
 
 ---
 
-## Mathematical Formulation & Conventions
+## Execution Modes
 
-### 1. Optimization Goal (Universal Minimization)
-All problems are formulated in standard minimization form:
-$$\min_{\mathbf{x}} \; \mathbf{c}^T \mathbf{x} \quad \text{subject to} \quad A\mathbf{x} = \mathbf{b}, \quad \mathbf{x} \ge 0$$
-- If a maximization objective is provided, it is negated: $\max f(\mathbf{x}) \iff \min -f(\mathbf{x})$.
-- All constraint right-hand sides are normalized so that $\mathbf{b} \ge 0$. Any row with $\text{RHS} < 0$ is multiplied by $-1$ with its inequality reversed before tableau construction.
+### 1. Interactive Web GUI & CSV CLI (`source/gui.py`)
 
-### 2. Tableau Layout & RHS Placement
-In this implementation, the tableau columns are arranged as:
-$$\begin{array}{|c|c|cccc|}
-\hline
-\textbf{Basis} & \textbf{RHS} & x_1 & x_2 & \dots & x_n \\
-\hline
--z & \text{RHS}_0 & \bar{c}_1 & \bar{c}_2 & \dots & \bar{c}_n \\
-\hline
-x_{B(1)} & \text{RHS}_1 & a_{1,1} & a_{1,2} & \dots & a_{1,n} \\
-\vdots & \vdots & \vdots & \vdots & \ddots & \vdots \\
-x_{B(m)} & \text{RHS}_m & a_{m,1} & a_{m,2} & \dots & a_{m,n} \\
-\hline
-\end{array}$$
+Launch the local web application:
 
-- **Column 1 (`Basis`)**: Name of the basic variable for that row (`-z` or `-w` for Row 0; $x_i$, $s_i$, or $y_i$ for constraint rows).
-- **Column 2 (`RHS`)**: Constant term of the row equation.
-  - For Row 0: represents the raw identity $-z = \text{RHS}_0 \implies z = -\text{RHS}_0$.
-  - For Row $i \ge 1$: indicates the value of basic variable $x_{B(i)} = \text{RHS}_i$. Non-basic variables are $0$.
-- **No $z$ column**: The identity column for $z$ is eliminated to save space and match textbook practice.
+```bash
+python3 source/gui.py
+```
 
-### 3. Bland's Smallest-Subscript Anti-Cycling Rule
-Dantzig's standard "most negative reduced cost" rule can cycle indefinitely on degenerate linear programs. Bland's rule guarantees finite termination without cycling:
+- Automatically selects the first available local port starting at `5050` (`http://127.0.0.1:5050`) and binds strictly to loopback `127.0.0.1`.
+- Provides color-coded tableau rendering (basic vs. non-basic columns, artificial variables `y_i`, Row 0 reduced costs, RHS), sub-step playback (pivot selection, row normalization, Gauss-Jordan elimination), interactive CSV editor backed by `csv/`, manual LP entry form, built-in benchmarks (`beale`, `twophase`, `standard2d`), and automated SciPy HiGHS correctness checking.
 
-1. **Entering Variable Selection**:
-   - Compute candidate non-basic variables with strictly negative Row 0 reduced costs: $\mathcal{C} = \{ j \mid \bar{c}_j < 0 \}$.
-   - If $\mathcal{C} = \emptyset$, current tableau is **optimal**.
-   - Otherwise, select the candidate variable with the **smallest subscript index**:
-     $$j^* = \arg\min_{j \in \mathcal{C}} \; \text{index}(x_j)$$
+To solve any CSV tableau directly in the terminal without starting the HTTP server:
 
-2. **Leaving Variable Selection (Minimum $\theta$ Ratio Test)**:
-   - For all constraint rows $i \in \{1, \dots, m\}$ where the pivot column entry is strictly positive ($a_{i, j^*} > 0$), calculate:
-     $$\theta_i = \frac{\text{RHS}_i}{a_{i, j^*}}$$
-   - If no $a_{i, j^*} > 0$ exists, the linear program is **unbounded**.
-   - Compute the minimum ratio: $\theta^* = \min \{ \theta_i \mid a_{i, j^*} > 0 \}$.
-   - If there is a tie ($\theta_i = \theta^*$ for multiple rows), choose the basic variable with the **smallest subscript index**:
-     $$i^* = \arg\min_{\{i \mid \theta_i = \theta^*\}} \; \text{index}(x_{B(i)})$$
-
-3. **Subscript Index Ordering**:
-   Variables are assigned a strict, 1-based sequential index:
-   $$\text{Decision Variables } (x_1, \dots, x_n) < \text{Slack Variables } (x_{n+1}, \dots) < \text{Surplus } (e_1, \dots) < \text{Artificial } (y_1, \dots)$$
-
-### 4. Two-Phase Simplex
-When constraints contain $\ge$ or $=$ relations (or when `--force-two-phase` is requested), basic slack variables cannot provide an initial feasible basis:
-- **Phase 1**:
-  - Introduces non-negative artificial variables $y_1, \dots, y_k$.
-  - Row 0 minimizes the sum of artificials: $-w = -\sum y_i$.
-  - Canonicalizes Row 0 against the initial artificial basis so reduced costs of $y_i$ become $0$.
-  - Solves using Bland's rule. If $\min W > 0$, the problem is **infeasible**. If $\min W = 0$, a feasible basis has been found.
-  - If any $y_i$ remains in the basis at value $0$, it is pivoted out with a non-artificial non-basic variable.
-- **Phase 2**:
-  - Drops all artificial columns $y_i$.
-  - Restores the original objective function Row 0 ($-z$).
-  - Canonicalizes Row 0 with respect to the Phase 1 final basis.
-  - Continues Bland's simplex iterations until optimality.
+```bash
+python3 source/gui.py csv/tableau.csv --cli
+python3 source/gui.py example_standard.csv --cli
+```
 
 ---
 
-## CSV Tableau Format & Specifications
+### 2. LP & Duality Solver CLI (`skills/tableau-solver/scripts/solve_tableau.py`)
 
-CSV files stored in [`csv/`](csv/) represent initial tableaus.
+Designed for both direct terminal use and zero-mental-math execution by LLM agents:
 
-### Example: `csv/tableau.csv` (Beale's Problem)
+```bash
+# Solve from CSV (auto-searches workspace root, csv/, and examples/)
+python3 skills/tableau-solver/scripts/solve_tableau.py --csv tableau.csv --verify-scipy
+
+# Solve from raw CSV/text inline
+python3 skills/tableau-solver/scripts/solve_tableau.py \
+  --raw "Basis,RHS,x1,x2\n-z,0,-3,-5\nx3,4,1,0\nx4,12,0,2\nx5,18,3,2"
+
+# Solve algebraic LP, display Dual LP, and export full Markdown report
+python3 skills/tableau-solver/scripts/solve_tableau.py \
+  --lp "min 4*x1 + x2 s.t. 3*x1 + x2 = 3; 4*x1 + 3*x2 >= 6; x1 + 2*x2 <= 4; x1, x2 >= 0" \
+  --show-dual --output-md solution.md --verify-scipy
+
+# Run via Dual Simplex (requires initial dual-feasible tableau with c_j >= 0)
+python3 skills/tableau-solver/scripts/solve_tableau.py \
+  --lp "min 2*x1 + 3*x2 s.t. x1 + x2 >= 2; 2*x1 + x2 >= 3; x1, x2 >= 0" \
+  --dual-simplex
+
+# Pipe from stdin and emit structured JSON
+cat csv/tableau.csv | python3 skills/tableau-solver/scripts/solve_tableau.py --stdin --format json
+```
+
+| Flag | Description |
+|---|---|
+| `--csv <path>` | Load initial tableau from a CSV file. |
+| `--raw "<text>"` | Parse multiline or `\n`-separated tableau text directly from CLI. |
+| `--stdin` | Read tableau text from standard input. |
+| `--lp "<text>"` | Parse algebraic LP text (`min`/`max`, constraints separated by newlines or `;`). |
+| `--two-phase` | Force Two-Phase Simplex even when a slack basis already exists. |
+| `--dual-simplex` | Run Dual Simplex (for tableaus with $c_j \ge 0$ and negative RHS). |
+| `--show-dual` | Print the mathematical dual LP formulation (when using `--lp`). |
+| `--output-md <path>` | Export a complete Markdown walkthrough report. |
+| `--format {text,markdown,json}` | Select stdout format (default: `text`). |
+| `--verify-scipy` | Cross-verify optimal value and status against `scipy.optimize.linprog`. |
+
+---
+
+### 3. Integer Linear Programming Solver (`skills/ilp-solver/scripts/solve_ilp.py`)
+
+Analyzes Total Unimodularity and solves pure ILPs via Chvátal-Gomory cutting planes and Dual Simplex re-optimization:
+
+```bash
+# Solve a built-in example ('gomory2d' or 'tum')
+python3 skills/ilp-solver/scripts/solve_ilp.py --example gomory2d --verify-scipy
+python3 skills/ilp-solver/scripts/solve_ilp.py --example tum --verify-scipy
+
+# Solve from an .lp file and generate an interactive 2D HTML cut visualizer
+python3 skills/ilp-solver/scripts/solve_ilp.py \
+  --lp skills/ilp-solver/examples/gomory_2d.lp \
+  --visualize-2d skills/ilp-solver/examples/gomory_2d_viz.html \
+  --output-md ilp_report.md --verify-scipy
+
+# Solve an inline single-line ILP
+python3 skills/ilp-solver/scripts/solve_ilp.py \
+  --lp "max 2*x1 + 3*x2 s.t. 2*x1 + 5*x2 <= 16; 6*x1 + 2*x2 <= 27; x1, x2 >= 0"
+```
+
+| Flag | Description |
+|---|---|
+| `--lp <text_or_path>` | Algebraic LP formulation string or path to `.lp` file. |
+| `--example {gomory2d,tum}` | Run a built-in benchmark problem. |
+| `--max-cuts <N>` | Maximum cutting plane iterations (default: `15`). |
+| `--visualize-2d <path.html>` | Export interactive standalone 2D HTML/SVG cut visualizer (when $n = 2$). |
+| `--output-md <path.md>` | Export TUM analysis, cut derivations, and integer optimum to Markdown. |
+| `--verify-scipy` | Cross-verify integer optimum against `scipy.optimize.milp` (HiGHS). |
+
+---
+
+## Mathematical Conventions
+
+### 1. Universal Minimization & Row 0 Identity
+
+In the Simplex tableau engines, problems are solved in standard minimization form:
+
+$$
+\min_{\mathbf{x}} \; \mathbf{c}^T \mathbf{x} \quad \text{subject to} \quad A\mathbf{x} = \mathbf{b}, \quad \mathbf{x} \ge 0
+$$
+
+- Maximization problems $\max \mathbf{c}^T \mathbf{x}$ are transformed internally via $\min (-\mathbf{c}^T \mathbf{x})$.
+- Row 0 is labeled `-z` (or `-w` in Phase 1) and encodes:
+
+$$
+-z + \sum_{j \in N} \bar{c}_j x_j = \text{RHS}_0 \implies z = -\text{RHS}_0
+$$
+
+- Constraint rows with $\text{RHS} < 0$ are multiplied by $-1$ (reversing inequality sense) prior to primal/two-phase setup, except when running `--dual-simplex` directly on a dual-feasible tableau.
+
+### 2. Tableau Layout
+
+Columns follow left-hand RHS placement without a separate $z$ column:
+
+```text
++-------+-------+------+------+-----+------+
+| Basis |  RHS  |  x1  |  x2  | ... |  xn  |
++-------+-------+------+------+-----+------+
+|  -z   | RHS_0 | c̄_1  | c̄_2  | ... | c̄_n  |
+| xB(1) | RHS_1 | a_11 | a_12 | ... | a_1n |
+|  ...  |  ...  | ...  | ...  | ... | ...  |
+| xB(m) | RHS_m | a_m1 | a_m2 | ... | a_mn |
++-------+-------+------+------+-----+------+
+```
+
+### 3. Bland's Anti-Cycling Rule
+
+All variables are assigned a strict 1-based subscript index:
+
+$$
+\text{Decision } (x_1, \dots, x_n) < \text{Slack } (x_{n+1}, \dots) < \text{Surplus } (e_1, \dots) < \text{Artificial } (y_1, \dots)
+$$
+
+1. **Entering Variable**: Among non-basic variables with $\bar{c}_j < 0$, choose the one with the smallest index. If none exist, the tableau is optimal.
+2. **Leaving Variable**: Among rows with $a_{ij^*} > 0$, compute $\theta_i = \text{RHS}_i / a_{ij^*}$. If no entry is positive, the LP is unbounded. On a minimum-ratio tie, choose the basic variable with the smallest index.
+
+### 4. Duality, Shadow Prices & Dual Simplex
+
+- Given optimal basis $B$, the exact dual solution is computed as $y^* = B^{-T} c_B$, satisfying Strong Duality ($z^* = w^*$) and Complementary Slackness ($y_i^* s_i^* = 0$, $x_j^* \bar{c}_j = 0$).
+- Under **Dual Simplex** ($\bar{c}_j \ge 0$ for all $j$), the leaving row $l$ is chosen by most negative RHS (ties broken by Bland's index), and the entering column minimizes $\theta_j = \bar{c}_j / |a_{lj}|$ over $a_{lj} < 0$.
+
+### 5. Total Unimodularity & Chvátal-Gomory Cuts
+
+- **Total Unimodularity (TUM)**: Before solving the ILP cutting loop, `solve_ilp.py` tests whether $A$ is TUM and $b \in \mathbb{Z}^m$. By the **Hoffman-Kruskal Theorem**, when $A$ is TUM and $b$ is integral, $P = \{x \ge 0 : Ax \le b\}$ is an **Ideal Polyhedron** ($P = P_I = \text{conv}(P \cap \mathbb{Z}^n)$), so the continuous LP optimum is automatically integral with zero cuts required.
+- **Chvátal-Gomory Cut Derivation**: From any fractional basic row $x_B + \sum_{j \in N} \bar{a}_{ij} x_j = \bar{b}_i$ with $f_0 = \bar{b}_i - \lfloor \bar{b}_i \rfloor \in (0, 1)$ and $f_j = \bar{a}_{ij} - \lfloor \bar{a}_{ij} \rfloor \in [0, 1)$, the valid cut is:
+
+$$
+\sum_{j \in N} f_j x_j \ge f_0 \iff -s_{\text{cut}} + \sum_{j \in N} (-f_j) x_j = -f_0
+$$
+
+- Substituting slack definitions yields the equivalent cut in original decision variables, while appending the `-f_0` row preserves dual feasibility so **Dual Simplex** immediately re-optimizes.
+
+---
+
+## CSV Tableau Format
+
+Files in [`csv/`](csv/) store initial tableaus with auto-detected formatting:
+
+- **Delimiters**: Comma (`,`), semicolon (`;`), or tab (`\t`).
+- **Numeric Values**: Integers, rationals (`1/2`, `-11/2`), dot decimals (`0.5`), and European comma decimals (`0,5`).
+- **Auto-Normalization**:
+  - Slack labels `s1, s2, ...` are normalized into sequential `x` variables (`x5, x6, ...`).
+  - Missing basic variable labels are inferred from unit identity columns.
+  - Legacy tableaus with right-hand RHS or explicit `z` columns are automatically normalized on load.
+
+Example (`csv/tableau.csv` — Beale's cycling benchmark):
+
 ```csv
 Basis,RHS,x1,x2,x3,x4,x5,x6,x7
 -z,0,-10,57,9,24,0,0,0
@@ -125,201 +283,81 @@ x6,0,1/2,-3/2,-1/2,1,0,1,0
 x7,1,1,0,0,0,0,0,1
 ```
 
-### Format Specifications:
-1. **Headers (Row 1)**: `Basis, RHS, var1, var2, ...`
-2. **Row 0 (Row 2)**: Objective row labeled `-z` (or `z`, `-w`, `w`).
-3. **Rows $1 \dots m$**: Constraint rows labeled with basic variables.
-4. **Delimiters**: Auto-detects comma (`,`), semicolon (`;`), or tab (`\t`).
-5. **Number Parsing**: Exact integer, standard fraction (`1/2`, `-11/2`), decimal with point (`0.5`), or decimal with European comma (`0,5`).
-6. **Automatic Normalization**:
-   - Legacy slack columns labeled `s1, s2, ...` are automatically converted to sequential $x$ variables (`x5, x6, ...`).
-   - If basic variables are omitted in column 0, they are inferred automatically via identity unit vectors.
-   - Older CSV tableaus with RHS on the far right or containing an explicit $z$ column are auto-converted to the standard format.
+---
+
+## Verified Benchmark Datasets
+
+| Dataset / Problem | Solver | Optimal Objective | Optimal Solution | Notes |
+|---|---|---|---|---|
+| [csv/tableau.csv](csv/tableau.csv) | Simplex (Bland) | $\min z^* = -1$ | $x_1=1, x_2=0, x_3=1, x_4=0, x_5=2$ | Beale (1955) cycling test; 7 pivots; dual $y^*=(0, -18, -1)$ |
+| [csv/example_standard.csv](csv/example_standard.csv) | Simplex (Bland) | $\min z^* = -33$ | $x_1=3, x_2=12, x_3=0, x_4=0, x_5=3$ | Standard 2D LP; dual $y^*=(-5/4, -1/4, 0)$ |
+| [skills/tableau-solver/examples/sample_tableau.csv](skills/tableau-solver/examples/sample_tableau.csv) | Simplex (Bland) | $\min z^* = -36$ | $x_1=2, x_2=6, x_3=2, x_4=0, x_5=0$ | Classic textbook LP ($\min -3x_1 - 5x_2$) |
+| Two-Phase Benchmark (`--demo twophase`) | Two-Phase Simplex | $\min z^* = 17/5$ | $x_1=2/5, x_2=9/5, e_1=1$ | Mixed $=, \ge, \le$ constraints; dual $y^*=(7/5, 0, -1/5)$ |
+| [skills/ilp-solver/examples/gomory_2d.lp](skills/ilp-solver/examples/gomory_2d.lp) | Chvátal-Gomory ILP | $\max z^*_{\text{ILP}} = 12$ | $x_1=3, x_2=2$ | Continuous LP $z_{\text{LP}} = 166/13$ at $(103/26, 21/13)$; 3 cuts |
+| [skills/ilp-solver/examples/tum_network.lp](skills/ilp-solver/examples/tum_network.lp) | TUM + LP Relaxation | $\max z^*_{\text{ILP}} = 5$ | $x_1=3, x_2=2$ | Verified TUM & Ideal Polyhedron ($P = P_I$); 0 cuts needed |
 
 ---
 
-## Execution & Usage
+## Embedded REST API (`source/gui.py`)
 
-### 1. Launch Interactive Web GUI
-Run from repository root:
-```bash
-python3 source/gui.py
-```
-Or from within `source/`:
-```bash
-cd source && python3 gui.py
-```
-- Starts local HTTP server (automatically picks a free port starting at `5050`).
-- Automatically launches your default web browser at `http://127.0.0.1:<port>`.
+When the Web GUI runs on `http://127.0.0.1:<port>`, it exposes a JSON API restricted to loopback connections. CSV file operations are confined strictly to plain `.csv` basenames inside `csv/` or the repository root.
 
-### 2. Command Line Interface (CLI Mode)
-Solve any CSV tableau directly in the terminal without opening a browser:
-```bash
-# Relative to csv/ directory
-python3 source/gui.py csv/tableau.csv --cli
-
-# Or simply specify filename (auto-resolved from csv/)
-python3 source/gui.py tableau.csv --cli
-
-# Solve standard textbook 2D LP
-python3 source/gui.py example_standard.csv --cli
-```
-
----
-
-## Embedded REST API Reference
-
-When `source/gui.py` runs, it exposes a lightweight JSON HTTP API. This allows AI subagents, headless scripts, or automated tests to interact with the solver programmatically without a browser.
-
-| Endpoint | Method | Parameters / Body | Response Description |
+| Endpoint | Method | Parameters / JSON Body | Description |
 |---|---|---|---|
-| `/` | `GET` | None | Returns the full single-page web GUI application (`text/html`). |
-| `/api/csv-files` | `GET` | None | Returns JSON array of available CSV filenames found in `csv/` and root: `["tableau.csv", "example_standard.csv"]`. |
-| `/api/load-csv` | `GET` | `?file=<filename>` | Returns parsed `{ "headers": [...], "rows": [[...]] }`. Automatically resolves path in `csv/`. |
-| `/api/solve-file` | `GET` | `?file=<filename>&force_two_phase=<bool>` | Solves the specified CSV tableau. Returns `{ "status": "OPTIMAL", "steps": [...], "final_solution": {...} }`. |
-| `/api/demo` | `GET` | `?name=<beale\|twophase\|standard2d>` | Solves one of the built-in reference benchmarks and returns full trajectory. |
-| `/api/solve-tableau` | `POST` | JSON: `{ "headers": [...], "rows": [[...]], "force_two_phase": bool }` | Solves an in-memory edited tableau. |
-| `/api/solve-lp` | `POST` | JSON: `{ "obj_type": "min", "obj_coeffs": [...], "constraints": [...], "force_two_phase": bool }` | Constructs standard form, adds artificials if needed, and solves. |
-| `/api/save-csv` | `POST` | JSON: `{ "filename": "name.csv", "content": "..." }` | Saves or overwrites a CSV tableau into the `csv/` directory. |
-
-### Step Object Schema in Response (`steps` array)
-Each item in `steps` represents an elementary sub-step:
-```json
-{
-  "iteration": 0,
-  "substep_idx": 1,
-  "substep_total": 4,
-  "substep_type": "pivot_selection",
-  "title": "Iteration 0 • Step 1: Select Pivot",
-  "substep_desc": "Entering: 'x1' ... Leaving: 'x6' ...",
-  "formula": "Pivot: a(R2, x1) = 1/2, min θ = 0",
-  "pivot": { "row": 2, "col": 0, "val": "1/2" },
-  "active_rows": [2],
-  "active_cols": [0],
-  "var_names": ["x1", "x2", "x3", "x4", "x5", "x6", "x7"],
-  "basic_vars": ["x5", "x6", "x7"],
-  "obj_name": "-z",
-  "rows": [
-    { "basic": "-z", "rhs": "0", "cells": ["-10", "57", "9", "24", "0", "0", "0"] },
-    { "basic": "x5", "rhs": "0", "cells": ["1/2", "-11/2", "-5/2", "9", "1", "0", "0"] }
-  ],
-  "status": "CONTINUE",
-  "candidates": [
-    { "name": "x1", "index": 1, "col": 0, "coeff": "-10" }
-  ],
-  "ratios": [
-    { "row": 1, "basic": "x5", "index": 5, "theta": "0", "valid": true, "rhs": "0", "coeff": "1/2" },
-    { "row": 2, "basic": "x6", "index": 6, "theta": "0", "valid": true, "rhs": "0", "coeff": "1/2" }
-  ],
-  "min_ratio": "0",
-  "tied": true,
-  "bland_tie_note": "Tie detected between 2 rows with minimum θ = 0. Bland's Rule selects basic variable with smallest index: 'x5' (Index 5)."
-}
-```
+| `/` | `GET` | None | Serves the single-page Web GUI HTML/CSS/JS application. |
+| `/api/csv-files` | `GET` | None | Lists available `.csv` basenames in `csv/` and root. |
+| `/api/load-csv` | `GET` | `?file=<name.csv>` | Returns parsed `{ "headers": [...], "rows": [[...]] }`. |
+| `/api/solve-file` | `GET` | `?file=<name.csv>&force_two_phase=<bool>` | Solves a CSV tableau; returns `{ "status", "steps", "final_solution", "scipy", "correctness" }`. |
+| `/api/demo` | `GET` | `?name=<beale\|twophase\|standard2d>` | Solves a built-in benchmark and returns its step trajectory. |
+| `/api/solve-tableau` | `POST` | `{ "headers": [...], "rows": [[...]], "force_two_phase": bool }` | Solves an in-memory edited tableau. |
+| `/api/solve-lp` | `POST` | `{ "obj_type": "min", "obj_coeffs": [...], "constraints": [...], "force_two_phase": bool }` | Converts an LP to standard form and returns full trajectory and SciPy check. |
+| `/api/save-csv` | `POST` | `{ "filename": "<name.csv>", "content": "..." }` | Saves a `.csv` tableau into `csv/`. |
 
 ---
 
-## Programmatic Python API
-
-Any script or test can import and use the engine directly without network overhead:
+## Programmatic Python Usage
 
 ```python
 import sys
 sys.path.insert(0, "source")
 import gui
 
-# 1. Load and solve a CSV tableau directly:
-tableau, obj_type = gui.load_tableau_from_csv("tableau.csv") # Auto-resolves to csv/tableau.csv
+# 1. Load and solve a CSV tableau directly
+tableau, obj_type = gui.load_tableau_from_csv("tableau.csv")
 result = gui.record_tableau_steps_twophase(tableau, obj_type="min")
-
 print("Status:", result["status"])
 print("Optimal Objective:", result["final_solution"]["obj_val"])
-print("Solution Vector:", result["final_solution"]["solution_vector"])
+print("SciPy Verification:", result["correctness"]["status"])
 
-# 2. Formulate and solve an arbitrary LP from equations:
+# 2. Construct and solve a Linear Program in Python
 lp = gui.LinearProgram(
     obj_type="min",
-    obj_coeffs=[gui.parse_fraction("-3"), gui.parse_fraction("-5")],
+    obj_coeffs=[gui.parse_fraction("-3"), gui.parse_fraction("-2")],
     constraints=[
-        ([gui.parse_fraction("1"), gui.parse_fraction("0")], "<=", gui.parse_fraction("4")),
-        ([gui.parse_fraction("0"), gui.parse_fraction("2")], "<=", gui.parse_fraction("12")),
-        ([gui.parse_fraction("3"), gui.parse_fraction("2")], "<=", gui.parse_fraction("18")),
+        ([gui.parse_fraction("2"), gui.parse_fraction("1")], "<=", gui.parse_fraction("18")),
+        ([gui.parse_fraction("2"), gui.parse_fraction("3")], "<=", gui.parse_fraction("42")),
+        ([gui.parse_fraction("3"), gui.parse_fraction("1")], "<=", gui.parse_fraction("24")),
     ],
     var_names=["x1", "x2"],
-    force_two_phase=False
 )
-lp_result = gui.record_lp_steps(lp)
-print("LP Optimal Status:", lp_result["status"])
-print("LP Min z*:", lp_result["final_solution"]["obj_val"]) # -36
+lp_res = gui.record_lp_steps(lp)
+print("Min z*:", lp_res["final_solution"]["raw_obj_val"])  # -33
 ```
 
 ---
 
-## LLM Agent Skill (`skills/tableau-solver/`)
+## AI Coding Agent Integration
 
-The repository includes a dedicated **Skill** designed for LLMs and AI Agents (compatible with Antigravity and custom agent runners) to solve tableaux without doing mental arithmetic or calling external LLM APIs.
+Relative symlinks in `.agents/skills/` expose [`skills/tableau-solver/SKILL.md`](skills/tableau-solver/SKILL.md) and [`skills/ilp-solver/SKILL.md`](skills/ilp-solver/SKILL.md) to compatible AI coding assistants (such as Antigravity, Claude Code, Codex, and Cursor). Agents automatically invoke the Python scripts instead of performing approximate mental arithmetic.
 
-### Skill Highlights:
-- **Zero LLM API Needed**: Calculations are executed entirely by the local Python runtime using exact rational arithmetic (`fractions.Fraction`).
-- **Step-by-Step Mathematical Walkthrough**: Reports every single iteration with:
-  - Entering variable ($c_j < 0$, Bland's rule)
-  - Minimum ratio test table ($\theta = \text{RHS}_i / a_{ij}$)
-  - Leaving variable and pivot element $(p, q)$
-  - Elementary row operations ($R_p \leftarrow \frac{1}{a_{pq}} R_p$, $R_i \leftarrow R_i - a_{iq} R_p$)
-  - Resulting intermediate and optimal tableaux
-- **Markdown Solution Export**: Generates a self-contained, publication-grade `.md` report using the `--output-md <file.md>` flag.
-- **Multiple Input Modes**: Accepts CSV files, raw tableau text passed inline from the prompt, standard input, or algebraic LP formulations.
-
-### Usage:
+You can also run the bundled skill test suite with:
 
 ```bash
-# 1. From a CSV file (auto-searches csv/ and project folders):
-python3 skills/tableau-solver/scripts/solve_tableau.py --csv tableau.csv
-
-# 2. From raw tableau text passed directly in the prompt:
-python3 skills/tableau-solver/scripts/solve_tableau.py --raw "Basis,RHS,x1,x2\n-z,0,-3,-5\nx3,4,1,0\nx4,12,0,2\nx5,18,3,2"
-
-# 3. From standard LP formulation text:
-python3 skills/tableau-solver/scripts/solve_tableau.py --lp "min 4*x1 + x2 s.t. 3*x1 + x2 = 3; 4*x1 + 3*x2 >= 6; x1 + 2*x2 <= 4; x1, x2 >= 0"
-
-# 4. Generate a comprehensive solution Markdown file (.md):
-python3 skills/tableau-solver/scripts/solve_tableau.py --csv tableau.csv --output-md solution.md
+bash skills/tableau-solver/examples/test_run.sh
 ```
-
-See [skills/tableau-solver/SKILL.md](skills/tableau-solver/SKILL.md) for the full agent specification and runbook.
-
----
-
-## Reference Benchmark Verification Cases
-
-### 1. Beale's Cycling Benchmark (1955)
-- **Problem**:
-  $$\min \; z = -10x_1 + 57x_2 + 9x_3 + 24x_4$$
-  Subject to:
-  $$\begin{aligned}
-  \frac{1}{2}x_1 - \frac{11}{2}x_2 - \frac{5}{2}x_3 + 9x_4 &\le 0 \\
-  \frac{1}{2}x_1 - \frac{3}{2}x_2 - \frac{1}{2}x_3 + x_4 &\le 0 \\
-  x_1 &\le 1 \\
-  x_1, x_2, x_3, x_4 &\ge 0
-  \end{aligned}$$
-- **Dantzig Rule Behavior**: Cycles indefinitely among 6 bases at objective value $0$.
-- **Bland's Rule Behavior**: Resolves ties deterministically, avoiding cycling and reaching optimality in 7 iterations.
-- **Optimal Solution**: $x_1 = 1$, $x_2 = 0$, $x_3 = 1$, $x_4 = 0$, $x_5 = 2$, $x_6 = 0$, $x_7 = 0$, with $\min z^* = -1$.
-
-### 2. Standard 2D Textbook LP
-- **Problem**:
-  $$\min \; z = -3x_1 - 5x_2 \quad \text{s.t.} \quad x_1 \le 4, \quad 2x_2 \le 12, \quad 3x_1 + 2x_2 \le 18, \quad x_1, x_2 \ge 0$$
-- **Optimal Solution**: $x_1 = 2$, $x_2 = 6$, slack $x_3 = 2$, $x_4 = 0$, $x_5 = 0$, with $\min z^* = -36$.
-
-### 3. Two-Phase LP with Artificial Variables
-- **Problem**:
-  $$\min \; z = 4x_1 + x_2 \quad \text{s.t.} \quad 3x_1 + x_2 = 3, \quad 4x_1 + 3x_2 \ge 6, \quad x_1 + 2x_2 \le 4, \quad x_1, x_2 \ge 0$$
-- **Phase 1**: Minimizes artificial variables $y_1, y_2$ to $0$.
-- **Phase 2**: Optimizes original objective from feasible basis.
-- **Optimal Solution**: $x_1 = 2/5 = 0.4$, $x_2 = 9/5 = 1.8$, with $\min z^* = 17/5 = 3.4$.
 
 ---
 
 ## License
 
-MIT License. See [LICENSE](LICENSE) for full text.
+Licensed under the [MIT License](LICENSE).

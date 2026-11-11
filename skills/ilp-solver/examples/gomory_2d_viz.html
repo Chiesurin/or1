@@ -300,7 +300,7 @@
         document.getElementById('step-label').textContent = "Continuous LP Relaxation";
         document.getElementById('cut-info-body').innerHTML = `
           <div><strong>Base Problem:</strong> Continuous relaxation solved to optimality via Simplex.</div>
-          <div style="margin-top: 6px;">Continuous optimum is fractional: <code>$x1 = ${lpOpt.x.toFixed(3)}, $x2 = ${lpOpt.y.toFixed(3)}</code>.</div>
+          <div style="margin-top: 6px;">Continuous optimum is fractional: <code>x1 = ${lpOpt.x.toFixed(3)}, x2 = ${lpOpt.y.toFixed(3)}</code>.</div>
           <div style="color: var(--amber); margin-top: 6px;">Chvátal-Gomory cuts are required to slice off the non-integer optimum while preserving all lattice points Z^2.</div>
         `;
       } else {

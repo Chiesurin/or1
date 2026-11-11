@@ -85,6 +85,49 @@ def resolve_csv_path(filename: str, for_writing: bool = False) -> str:
     return in_csv_dir if os.path.isdir(CSV_DIR) else filename
 
 
+def safe_http_csv_path(filename: str, for_writing: bool = False) -> str:
+    """
+    Strictly validates and resolves a CSV filename from HTTP requests so reads/writes
+    are confined to CSV_DIR or PROJECT_ROOT with no path traversal or subdirectory access.
+    """
+    if not isinstance(filename, str):
+        raise ValueError("Invalid filename.")
+    clean = filename.strip()
+    if (
+        not clean
+        or "\x00" in clean
+        or "/" in clean
+        or "\\" in clean
+        or ".." in clean
+        or os.path.isabs(clean)
+        or os.path.basename(clean) != clean
+    ):
+        raise ValueError(f"Invalid CSV filename '{filename}': must be a plain filename without path separators.")
+    if not clean.lower().endswith(".csv"):
+        raise ValueError(f"Invalid file extension for '{clean}': only .csv files are permitted.")
+
+    csv_real = os.path.realpath(CSV_DIR)
+    root_real = os.path.realpath(PROJECT_ROOT)
+
+    def _contained(base_dir: str, name: str) -> str:
+        candidate = os.path.realpath(os.path.join(base_dir, name))
+        if os.path.commonpath([candidate, base_dir]) != base_dir or os.path.dirname(candidate) != base_dir:
+            raise ValueError(f"Access denied for path '{name}'.")
+        return candidate
+
+    if for_writing:
+        target_dir = csv_real if os.path.isdir(csv_real) else root_real
+        return _contained(target_dir, clean)
+
+    in_csv = _contained(csv_real, clean)
+    if os.path.isfile(in_csv):
+        return in_csv
+    in_root = _contained(root_real, clean)
+    if os.path.isfile(in_root):
+        return in_root
+    return in_csv
+
+
 def get_available_csv_files() -> List[str]:
     """Finds all available CSV files in csv/ directory, project root, and cwd."""
     found: Dict[str, str] = {}
@@ -4576,8 +4619,12 @@ class SimplexGUIRequestHandler(BaseHTTPRequestHandler):
 
         elif path == "/api/load-csv":
             filename = query.get("file", ["tableau.csv"])[0]
-            filepath = resolve_csv_path(filename)
-            if not os.path.exists(filepath):
+            try:
+                filepath = safe_http_csv_path(filename)
+            except ValueError as e:
+                self.send_json({"error": str(e)}, status_code=400)
+                return
+            if not os.path.isfile(filepath):
                 self.send_json({"error": f"File '{filename}' not found"}, status_code=404)
                 return
             try:
@@ -4611,8 +4658,12 @@ class SimplexGUIRequestHandler(BaseHTTPRequestHandler):
         elif path == "/api/solve-file":
             filename = query.get("file", ["tableau.csv"])[0]
             force_tp = query.get("force_two_phase", ["true"])[0].lower() != "false"
-            filepath = resolve_csv_path(filename)
-            if not os.path.exists(filepath):
+            try:
+                filepath = safe_http_csv_path(filename)
+            except ValueError as e:
+                self.send_json({"error": str(e)}, status_code=400)
+                return
+            if not os.path.isfile(filepath):
                 self.send_json({"error": f"File '{filename}' not found"}, status_code=404)
                 return
             try:
@@ -4662,7 +4713,11 @@ class SimplexGUIRequestHandler(BaseHTTPRequestHandler):
             if path == "/api/save-csv":
                 filename = data.get("filename", "tableau.csv")
                 content = data.get("content", "")
-                filepath = resolve_csv_path(filename, for_writing=True)
+                try:
+                    filepath = safe_http_csv_path(filename, for_writing=True)
+                except ValueError as e:
+                    self.send_json({"error": str(e)}, status_code=400)
+                    return
                 with open(filepath, "w", encoding="utf-8") as f:
                     f.write(content)
                 self.send_json({"success": True, "message": f"Saved '{os.path.basename(filepath)}'"})
