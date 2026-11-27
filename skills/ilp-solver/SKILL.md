@@ -1,22 +1,23 @@
 ---
 name: ilp-solver
-description: Solves Integer Linear Programs (ILP) using the Chvátal-Gomory Cutting Plane Algorithm, performs Total Unimodularity (TUM) and Ideal Polyhedron analysis, and generates interactive 2D graphical visualizations of cuts. Use when the user asks to solve an ILP, analyze Total Unimodularity, derive Gomory or Chvátal cuts, inspect the integer hull, or visualize cutting planes on 2D polyhedra.
+description: Solves Integer Linear Programs (ILP) and Mixed-Integer Linear Programs (MILP) using the Chvátal-Gomory / GMI Cutting Plane Algorithm, Branch and Bound, and Branch and Cut, performs Total Unimodularity (TUM) and Ideal Polyhedron analysis, and generates interactive 2D graphical visualizations. Use when the user asks to solve an ILP or MILP, use Branch and Bound or Branch and Cut, analyze Total Unimodularity, derive Gomory or Chvátal cuts, inspect the integer hull, or visualize trees and cutting planes on 2D polyhedra.
 ---
 
-# Integer Linear Programming (ILP) Solver Skill
+# Integer & Mixed-Integer Linear Programming (ILP / MILP) Solver Skill
 
-This skill provides deterministic mathematical solving and visual explanations for Integer Linear Programming problems. It implements the **Chvátal-Gomory Cutting Plane Algorithm**, pre-solve **Total Unimodularity (TUM)** analysis for **Ideal Polyhedra**, and automatic **2D SVG/HTML graphical rendering**.
+This skill provides deterministic exact-arithmetic solving (`fractions.Fraction`) and visual explanations for Integer and Mixed-Integer Linear Programming problems. It implements **Total Unimodularity (TUM)** pre-solve analysis, **Chvátal-Gomory & Gomory Mixed-Integer (GMI) Cutting Planes**, **Branch and Bound**, **Branch and Cut**, and **2D SVG/HTML interactive visualization**.
 
 ---
 
 ## Capabilities & Triggers
 
 Activate this skill when the user:
-1. Asks to solve an **Integer Linear Program (ILP)**, Mixed-Integer Linear Program, or pure integer optimization problem.
-2. Requests **Gomory Fractional Cuts** or **Chvátal-Gomory Cuts** with step-by-step derivations.
-3. Asks for an analysis of **Total Unimodularity (TUM)** on a constraint matrix or asks if a polyhedron is **Ideal** ($P = P_I$, Hoffman-Kruskal theorem).
-4. Asks to visualize the continuous feasible region, integer lattice points $\mathbb{Z}^2$, and cutting planes in 2D.
-5. Asks to trace the **Dual Simplex** re-optimization iterations after cut injection.
+1. Asks to solve an **Integer Linear Program (ILP)**, **Mixed-Integer Linear Program (MILP)**, or binary `0-1` optimization problem.
+2. Requests **Branch and Bound** (`--method branch-and-bound` / `bnb`) with node-by-node tree trace, bounds, pruning reasons (`PRUNED_BOUND`, `INFEASIBLE`, `INTEGER_INCUMBENT`), and search strategy selection (`best-bound`, `dfs`, `bfs`).
+3. Requests **Branch and Cut** (`--method branch-and-cut` / `bnc`), combining LP relaxation, cutting plane rounds (Chvátal-Gomory or GMI cuts via Dual Simplex), cut inheritance across subtrees, and branching.
+4. Requests **Gomory Fractional Cuts** (`--method cutting-plane`) or **Gomory Mixed-Integer (GMI) Cuts** (`--cut-type gmi`) with step-by-step floor/fractional derivations.
+5. Asks for an analysis of **Total Unimodularity (TUM)** on a constraint matrix or asks if a polyhedron is **Ideal** ($P = P_I$, Hoffman-Kruskal theorem).
+6. Asks to visualize the continuous feasible region, integer lattice points $\mathbb{Z}^2$, branching hyperplanes, or cutting planes in 2D (`--visualize-2d`).
 
 ---
 
@@ -28,72 +29,95 @@ The standalone deterministic Python engine is located at:
 ### Standard Invocations
 
 ```bash
-# 1. Solve an ILP formulation directly from prompt text
-python3 skills/ilp-solver/scripts/solve_ilp.py --lp "max 2*x1 + 3*x2 s.t. 2*x1 + 5*x2 <= 16; 6*x1 + 2*x2 <= 27; x1, x2 >= 0"
+# 1. Pure Chvatal-Gomory Cutting Planes with 2D visualization
+python3 skills/ilp-solver/scripts/solve_ilp.py \
+  --lp skills/ilp-solver/examples/gomory_2d.lp \
+  --visualize-2d cuts_visualization.html --verify-scipy
 
-# 2. Solve from an .lp file and generate 2D interactive HTML visualization
-python3 skills/ilp-solver/scripts/solve_ilp.py --lp skills/ilp-solver/examples/gomory_2d.lp --visualize-2d cuts_visualization.html
+# 2. Branch and Bound with Best-Bound search and 2D tree visualizer
+python3 skills/ilp-solver/scripts/solve_ilp.py \
+  --example bnb --method branch-and-bound \
+  --visualize-2d bnb_visualization.html --verify-scipy
 
-# 3. Analyze Total Unimodularity and Ideal Polyhedron on a TUM problem
-python3 skills/ilp-solver/scripts/solve_ilp.py --example tum
+# 3. Branch and Cut (CG/GMI cuts + Dual Simplex + Branching)
+python3 skills/ilp-solver/scripts/solve_ilp.py \
+  --example bnb --method branch-and-cut --verify-scipy
 
-# 4. Export Markdown report and cross-verify with SciPy HiGHS MILP solver
-python3 skills/ilp-solver/scripts/solve_ilp.py --example gomory2d --output-md report.md --verify-scipy
+# 4. Mixed-Integer Linear Program (MILP) solved via Branch and Cut (GMI cuts)
+python3 skills/ilp-solver/scripts/solve_ilp.py \
+  --example milp --method branch-and-cut --output-md milp_report.md --verify-scipy
+
+# 5. Analyze Total Unimodularity and Ideal Polyhedron on a TUM problem
+python3 skills/ilp-solver/scripts/solve_ilp.py --example tum --verify-scipy
 ```
+
+### CLI Options Reference
+
+| Flag | Description |
+|---|---|
+| `--lp <text_or_path>` | LP/ILP/MILP formulation string (`;` or newline separated) or path to `.lp` file. Supports variable types (`integer`, `binary`, `continuous`). |
+| `--example {gomory2d,tum,bnb,milp}` | Run a built-in benchmark problem. |
+| `--method {cutting-plane,cg,branch-and-bound,bnb,branch-and-cut,bnc}` | Solving algorithm (default: `cutting-plane`). |
+| `--strategy {best-bound,dfs,bfs}` | Node selection rule for Branch & Bound / Branch & Cut (default: `best-bound`). |
+| `--branch-rule {most-fractional,first-fractional}` | Variable selection rule for branching (default: `most-fractional`). |
+| `--cut-type {auto,cg,gmi}` | Cut formula (`auto` uses CG when integer-safe, GMI otherwise). |
+| `--max-cuts <N>` | Max cuts in `cutting-plane` mode (default: `15`). |
+| `--cuts-per-node <N>` | Max cutting-plane rounds per node in `branch-and-cut` mode (default: `2`). |
+| `--cut-depth <N>` | Max tree depth at which cuts are generated in `branch-and-cut` (default: `5`). |
+| `--max-nodes <N>` | Node exploration limit for tree search (default: `200`). |
+| `--visualize-2d <path.html>` | Export interactive standalone 2D HTML/SVG visualizer (`cutting-plane`, `branch-and-bound`, or `branch-and-cut`). |
+| `--output-md <path.md>` | Export full Markdown summary report. |
+| `--format {text,json}` | Terminal stdout format (default: `text`). |
+| `--verify-scipy` | Cross-verify optimal value/status with `scipy.optimize.milp` (HiGHS). |
 
 ---
 
 ## Step-by-Step Workflow for Agents
 
-When answering a user request, execute the solver script and structure your explanation according to the following stages:
-
 ### Stage 1: Pre-Solve Total Unimodularity (TUM) Analysis
-Always check whether cutting planes are even necessary:
+Always check whether cutting planes or branching are even necessary:
 1. **Necessity Check**: Verify that every entry $a_{ij} \in \{-1, 0, 1\}$. If any entry is not, $A$ is not TUM.
-2. **Sufficient Criteria**:
-   - Check Poincaré / Heller-Tompkins criterion for network flows and bipartite incidence.
-   - Check Consecutive Ones (Interval Matrix) property.
-   - For small matrices, check that all square submatrix determinants $\in \{-1, 0, 1\}$.
+2. **Sufficient Criteria**: Check Poincaré / Heller-Tompkins criterion, Consecutive Ones property, and Bareiss submatrix determinants $\in \{-1, 0, 1\}$.
 3. **Ideal Polyhedron Determination (Hoffman-Kruskal)**:
-   - If $A$ is TUM and $b$ is integer, state clearly:
-     $$P = \{x \ge 0 : Ax \le b\} \implies P = P_I = \text{conv}(P \cap \mathbb{Z}^n)$$
-   - The continuous LP relaxation is guaranteed to have integer vertices. **No cuts are needed**, and the continuous Simplex solution directly solves the ILP.
+   - If $A$ is TUM and $b \in \mathbb{Z}^m$, $P = \{x \ge 0 : Ax \le b\} = P_I$, so the root LP relaxation yields an integer optimal solution directly with zero cuts or branches.
 
-### Stage 2: Continuous LP Relaxation (Step 0)
-1. Display the initial standardized tableau with slack variables.
-2. Report the optimal continuous solution $x^*_{\text{LP}}$ and objective value $z_{\text{LP}}$.
-3. If $x^*_{\text{LP}} \in \mathbb{Z}^n$, stop and report the optimal integer solution.
-4. If $x^*_{\text{LP}} \notin \mathbb{Z}^n$, identify all basic decision variables with fractional RHS values.
+### Stage 2: Root Continuous LP Relaxation (Step 0)
+1. Standardize all constraints (`<=`, `>=`, `=`, binary upper bounds `<= 1`) and solve via exact Two-Phase Simplex with Bland's rule.
+2. Report the continuous relaxation solution $x^*_{\text{LP}}$ and objective $z_{\text{LP}}$.
+3. If all integer/binary decision variables are already integers, stop and report the optimal solution.
 
-### Stage 3: Chvátal-Gomory Cut Derivations
-For each cut iteration:
-1. **Generating Row Selection**: State the chosen basic variable $x_B$ and its tableau row:
-   $$x_B + \sum_{j \in N} \bar{a}_{ij} x_j = \bar{b}_i$$
-2. **Floor Decomposition**: Show the exact integer floor and fractional part for every coefficient:
-   $$\lfloor \bar{b}_i \rfloor, \quad f_0 = \bar{b}_i - \lfloor \bar{b}_i \rfloor \in (0, 1)$$
-   $$\lfloor \bar{a}_{ij} \rfloor, \quad f_j = \bar{a}_{ij} - \lfloor \bar{a}_{ij} \rfloor \in [0, 1)$$
-3. **Gomory Fractional Cut in Tableau Form**:
-   $$\sum_{j \in N} f_j x_j \ge f_0 \iff -s_{\text{cut}} + \sum_{j \in N} (-f_j) x_j = -f_0$$
-4. **Re-projected Cut in Original Decision Variables**:
-   Substitute slack variable definitions to express the cut directly in decision variables:
-   $$\alpha_1 x_1 + \alpha_2 x_2 + \dots \le \beta$$
-   Explain how this cut strictly separates $x^*_{\text{LP}}$ while preserving all integer lattice points $\mathbb{Z}^n$.
-5. **Dual Simplex Re-optimization**:
-   - State leaving variable: $s_{\text{cut}}$ with negative RHS $-f_0$.
-   - Execute the Dual Minimum Ratio Test across $a_{\text{cut}, j} < 0$:
-     $$\theta^* = \min_{j : a_{\text{cut}, j} < 0} \frac{c_j}{|a_{\text{cut}, j}|}$$
-   - State entering variable and show the updated tableau.
+### Stage 3: Solve by Requested Exact Algorithm
+- **Mode A: Cutting Planes (`--method cutting-plane`)**:
+  - Pick fractional integer-constrained basic row $x_B + \sum_{j \in N} \bar{a}_{ij} x_j = \bar{b}_i$ with $f_0 = \bar{b}_i - \lfloor \bar{b}_i \rfloor \in (0, 1)$.
+  - Derive CG cut ($\sum f_j x_j \ge f_0$) or GMI cut ($\sum g_j x_j \ge f_0$), re-project into decision variables ($\alpha^T x \le \beta$), append $-s_{\text{cut}} + \sum (-g_j) x_j = -f_0$, and re-optimize via Dual Simplex.
+- **Mode B: Branch and Bound (`--method branch-and-bound`)**:
+  - Maintain global incumbent $(x^*, z^*)$.
+  - Pop next open leaf by `--strategy` (`best-bound`, `dfs`, `bfs`).
+  - Report each node's branch domain ($l_j \le x_j \le u_j$), LP relaxation bound, and exact outcome: `INFEASIBLE`, `PRUNED_BOUND`, `INTEGER_INCUMBENT`, `INTEGER_FATHOMED`, or `BRANCHED` ($x_r \le \lfloor \bar{x}_r \rfloor \mid x_r \ge \lceil \bar{x}_r \rceil$).
+- **Mode C: Branch and Cut (`--method branch-and-cut`)**:
+  - Combine node LP relaxation with up to `--cuts-per-node` CG/GMI cut rounds (with Dual Simplex re-optimization and immediate `INFEASIBLE`/`PRUNED_BOUND` checks) before branching.
+  - Propagate valid cuts cleanly down each subtree (root cuts globally, local cuts within subtree).
 
-### Stage 4: Final Solution & 2D Graphical Visualization
-1. Report the final integer optimal solution vector $x^*_{\text{ILP}}$ and optimal objective value $z^*_{\text{ILP}}$.
-2. If the problem is 2D ($n=2$), generate the interactive HTML visualizer with `--visualize-2d <filename>.html`.
-3. Provide a clear summary comparing continuous relaxation vs. integer optimum (integrality gap $z_{\text{LP}} - z^*_{\text{ILP}}$).
+### Stage 4: Final Solution, Cross-Check & 2D Graphical Visualization
+1. Report status, optimal objective $z^*$, solution vector, and integrality gap $|z_{\text{LP}} - z^*|$.
+2. If $n = 2$ and visualization is requested or helpful, generate the interactive HTML plot with `--visualize-2d <filename>.html`.
+3. Cross-verify against HiGHS using `--verify-scipy` when SciPy is installed.
+
+---
+
+## Directory Reference
+
+- [solve_ilp.py](./scripts/solve_ilp.py): Core deterministic ILP/MILP Python solver & 2D visualizer.
+- [gomory_cuts.md](./references/gomory_cuts.md): Chvátal-Gomory & Dual Simplex derivation reference.
+- [branch_and_bound_cut.md](./references/branch_and_bound_cut.md): Branch & Bound, Branch & Cut, and GMI cut mathematical reference.
+- [total_unimodularity.md](./references/total_unimodularity.md): TUM criteria & Hoffman-Kruskal reference.
+- [examples/gomory_2d.lp](./examples/gomory_2d.lp), [examples/bnb_2d.lp](./examples/bnb_2d.lp), [examples/milp_2d.lp](./examples/milp_2d.lp), [examples/tum_network.lp](./examples/tum_network.lp): Benchmark inputs.
 
 ---
 
 ## Constraints & Style Rules
 
-1. **Deterministic Calculations Only**: Never guess tableau fractions or cuts mentally; always run `solve_ilp.py` to extract exact mathematical values.
+1. **Deterministic Calculations Only**: Never guess tableau fractions, node bounds, or cuts mentally; always invoke `solve_ilp.py`.
 2. **No Emojis**: Do not use any emojis in prose, headers, or lists.
-3. **Exact Rational Fractions**: Express fractional quantities using LaTeX (e.g. $\frac{103}{26}$, $\frac{21}{13}$, $\frac{166}{13}$) alongside their decimal approximations.
+3. **Exact Rational Fractions**: Express fractional quantities using LaTeX (e.g., $\frac{103}{26}$, $\frac{165}{4}$, $\frac{55}{3}$) alongside decimal approximations.
 4. **File Links**: Create clickable markdown links for all generated files and artifacts.

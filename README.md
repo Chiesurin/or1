@@ -2,7 +2,7 @@
 
 **OR1** (*Operations Research 1*) is an open-source, exact-arithmetic toolkit for solving, verifying, and visualizing **Linear Programming (LP)** and **Integer Linear Programming (ILP)** problems.
 
-It combines a self-contained **Web GUI Visualizer & REST API**, a **Terminal CLI**, and two deterministic **AI Agent Skills** built around exact rational arithmetic (`fractions.Fraction`), **Bland's anti-cycling rule**, **Two-Phase Simplex**, **LP Duality & Dual Simplex**, **Total Unimodularity (TUM)** analysis, and **Chvátal-Gomory cutting planes**.
+It combines a self-contained **Web GUI Visualizer & REST API**, a **Terminal CLI**, and two deterministic **AI Agent Skills** built around exact rational arithmetic (`fractions.Fraction`), **Bland's anti-cycling rule**, **Two-Phase Simplex**, **LP Duality & Dual Simplex**, **Total Unimodularity (TUM)** analysis, **Chvátal-Gomory / GMI cutting planes**, **Branch and Bound**, and **Branch and Cut**.
 
 ---
 
@@ -15,11 +15,13 @@ It combines a self-contained **Web GUI Visualizer & REST API**, a **Terminal CLI
   - Exact shadow price computation via basis inversion ($B^T y^* = c_B$) for both `--lp` and `--csv`/`--raw` tableaus.
   - Explicit verification of **Strong Duality** ($z^* = w^*$) and **Complementary Slackness**.
   - Full step-by-step **Dual Simplex** execution for dual-feasible tableaus ($c_j \ge 0$) with negative RHS entries.
-- **Integer Linear Programming (ILP) Cutting Planes & TUM Analysis**:
+- **Integer & Mixed-Integer Linear Programming (ILP / MILP)**:
   - Pre-solve **Total Unimodularity (TUM)** inspection: checks entry necessity ($a_{ij} \in \{-1, 0, 1\}$), Poincaré / Heller-Tompkins network criteria, Consecutive Ones (interval matrix) property, and Bareiss exact submatrix determinants.
-  - **Hoffman-Kruskal Theorem** evaluation to identify Ideal Polyhedra ($P = P_I$) before introducing cuts.
-  - **Chvátal-Gomory fractional cuts** derived both in tableau slack form and re-projected into original decision variables, followed by Dual Simplex re-optimization.
-  - **Interactive 2D HTML/SVG Plotter** showing the continuous LP polyhedron, integer lattice points ($\mathbb{Z}^2$), step-by-step cutting hyperplanes, continuous optimum $x^*_{\text{LP}}$, and integer optimum $x^*_{\text{ILP}}$.
+  - **Hoffman-Kruskal Theorem** evaluation to identify Ideal Polyhedra ($P = P_I$) before introducing cuts or branches.
+  - **Chvátal-Gomory & Gomory Mixed-Integer (GMI) Cutting Planes** derived both in tableau slack form and re-projected into original decision variables, followed by Dual Simplex re-optimization.
+  - **Branch and Bound** supporting `best-bound`, `dfs`, and `bfs` node selection, `most-fractional` and `first-fractional` branching, and exact pruning (`INFEASIBLE`, `PRUNED_BOUND`, `INTEGER_INCUMBENT`, `INTEGER_FATHOMED`).
+  - **Branch and Cut** combining Two-Phase LP node relaxation, per-node CG/GMI cut generation with Dual Simplex re-optimization, and subtree branching.
+  - **Interactive 2D HTML/SVG Plotter** showing the continuous LP polyhedron, integer lattice points / MILP slices, branching bounds, cutting hyperplanes, node tree navigation, continuous optimum $x^*_{\text{LP}}$, and integer optimum $x^*_{\text{ILP}}$.
 - **Optional SciPy Cross-Verification**: Runs with zero mandatory third-party packages; when `scipy` and `numpy` are installed, solutions are automatically cross-checked against HiGHS (`scipy.optimize.linprog` and `scipy.optimize.milp`).
 - **Publication-Ready Exports**: Generates standalone Markdown walkthroughs (`--output-md`) and interactive single-file HTML visualizations (`--visualize-2d`).
 
@@ -76,17 +78,20 @@ python3 skills/ilp-solver/scripts/solve_ilp.py \
 │   ├── example_standard.csv            # Standard 2D minimization tableau (opt z* = -33)
 │   └── tableau.csv                     # Beale's 1955 cycling benchmark (opt z* = -1)
 ├── skills/
-│   ├── ilp-solver/                     # ILP TUM + Chvátal-Gomory cutting plane skill
+│   ├── ilp-solver/                     # ILP/MILP TUM, Cutting Planes, B&B & B&C skill
 │   │   ├── SKILL.md                    # Agent specification and workflow
 │   │   ├── examples/
+│   │   │   ├── bnb_2d.lp               # Classic 2D Branch & Bound / Branch & Cut ILP
 │   │   │   ├── gomory_2d.lp            # Classical 2D non-TUM ILP example
 │   │   │   ├── gomory_2d_viz.html      # Interactive 2D cut visualization HTML output
+│   │   │   ├── milp_2d.lp              # 2D Mixed-Integer LP (integer + continuous)
 │   │   │   └── tum_network.lp          # Ideal polyhedron (TUM) benchmark example
 │   │   ├── references/
+│   │   │   ├── branch_and_bound_cut.md # B&B, Branch & Cut, and GMI cuts reference
 │   │   │   ├── gomory_cuts.md          # Chvátal-Gomory & Dual Simplex derivation notes
 │   │   │   └── total_unimodularity.md  # TUM criteria & Hoffman-Kruskal reference
 │   │   └── scripts/
-│   │       └── solve_ilp.py            # Deterministic ILP, TUM & 2D SVG/HTML engine
+│   │       └── solve_ilp.py            # Deterministic ILP/MILP, TUM, B&B, B&C & 2D engine
 │   └── tableau-solver/                 # LP Simplex, Two-Phase & Duality agent skill
 │       ├── SKILL.md                    # Agent specification and workflow
 │       ├── examples/
@@ -168,34 +173,50 @@ cat csv/tableau.csv | python3 skills/tableau-solver/scripts/solve_tableau.py --s
 
 ---
 
-### 3. Integer Linear Programming Solver (`skills/ilp-solver/scripts/solve_ilp.py`)
+### 3. Integer & Mixed-Integer LP Solver (`skills/ilp-solver/scripts/solve_ilp.py`)
 
-Analyzes Total Unimodularity and solves pure ILPs via Chvátal-Gomory cutting planes and Dual Simplex re-optimization:
+Analyzes Total Unimodularity and solves pure ILPs and MILPs using **Chvátal-Gomory / GMI Cutting Planes**, **Branch and Bound**, or **Branch and Cut**:
 
 ```bash
-# Solve a built-in example ('gomory2d' or 'tum')
+# 1. Pure Cutting Planes on a built-in example ('gomory2d', 'tum', 'bnb', 'milp')
 python3 skills/ilp-solver/scripts/solve_ilp.py --example gomory2d --verify-scipy
-python3 skills/ilp-solver/scripts/solve_ilp.py --example tum --verify-scipy
 
-# Solve from an .lp file and generate an interactive 2D HTML cut visualizer
+# 2. Branch and Bound with Best-Bound search and 2D tree visualizer
+python3 skills/ilp-solver/scripts/solve_ilp.py \
+  --example bnb --method branch-and-bound \
+  --visualize-2d bnb_2d_viz.html --verify-scipy
+
+# 3. Branch and Cut (CG/GMI cuts + Dual Simplex + Branching)
+python3 skills/ilp-solver/scripts/solve_ilp.py \
+  --example bnb --method branch-and-cut --verify-scipy
+
+# 4. Mixed-Integer LP solved with Branch and Cut (GMI cuts)
+python3 skills/ilp-solver/scripts/solve_ilp.py \
+  --example milp --method branch-and-cut --output-md milp_report.md --verify-scipy
+
+# 5. Solve from an .lp file and export interactive 2D cut visualizer
 python3 skills/ilp-solver/scripts/solve_ilp.py \
   --lp skills/ilp-solver/examples/gomory_2d.lp \
   --visualize-2d skills/ilp-solver/examples/gomory_2d_viz.html \
   --output-md ilp_report.md --verify-scipy
-
-# Solve an inline single-line ILP
-python3 skills/ilp-solver/scripts/solve_ilp.py \
-  --lp "max 2*x1 + 3*x2 s.t. 2*x1 + 5*x2 <= 16; 6*x1 + 2*x2 <= 27; x1, x2 >= 0"
 ```
 
 | Flag | Description |
 |---|---|
-| `--lp <text_or_path>` | Algebraic LP formulation string or path to `.lp` file. |
-| `--example {gomory2d,tum}` | Run a built-in benchmark problem. |
-| `--max-cuts <N>` | Maximum cutting plane iterations (default: `15`). |
-| `--visualize-2d <path.html>` | Export interactive standalone 2D HTML/SVG cut visualizer (when $n = 2$). |
-| `--output-md <path.md>` | Export TUM analysis, cut derivations, and integer optimum to Markdown. |
-| `--verify-scipy` | Cross-verify integer optimum against `scipy.optimize.milp` (HiGHS). |
+| `--lp <text_or_path>` | Algebraic formulation string or path to `.lp` file (supports `integer`, `binary`, `continuous`). |
+| `--example {gomory2d,tum,bnb,milp}` | Run a built-in benchmark problem. |
+| `--method {cutting-plane,cg,branch-and-bound,bnb,branch-and-cut,bnc}` | Solving algorithm (default: `cutting-plane`). |
+| `--strategy {best-bound,dfs,bfs}` | Node selection rule for Branch & Bound / Branch & Cut (default: `best-bound`). |
+| `--branch-rule {most-fractional,first-fractional}` | Variable selection rule for branching (default: `most-fractional`). |
+| `--cut-type {auto,cg,gmi}` | Cut generator mode (default: `auto`: CG when integer-safe, GMI otherwise). |
+| `--max-cuts <N>` | Maximum cutting plane iterations in `cutting-plane` mode (default: `15`). |
+| `--cuts-per-node <N>` | Max cut rounds per tree node in `branch-and-cut` (default: `2`). |
+| `--cut-depth <N>` | Max tree depth for cut generation in `branch-and-cut` (default: `5`). |
+| `--max-nodes <N>` | Maximum explored nodes in tree search (default: `200`). |
+| `--visualize-2d <path.html>` | Export standalone 2D HTML/SVG visualizer across all three methods (when $n = 2$). |
+| `--output-md <path.md>` | Export TUM analysis, tree/cut trace, and optimal solution to Markdown. |
+| `--format {text,json}` | Select terminal stdout format (default: `text`). |
+| `--verify-scipy` | Cross-verify optimal objective and status against `scipy.optimize.milp` (HiGHS). |
 
 ---
 
@@ -293,7 +314,9 @@ x7,1,1,0,0,0,0,0,1
 | [csv/example_standard.csv](csv/example_standard.csv) | Simplex (Bland) | $\min z^* = -33$ | $x_1=3, x_2=12, x_3=0, x_4=0, x_5=3$ | Standard 2D LP; dual $y^*=(-5/4, -1/4, 0)$ |
 | [skills/tableau-solver/examples/sample_tableau.csv](skills/tableau-solver/examples/sample_tableau.csv) | Simplex (Bland) | $\min z^* = -36$ | $x_1=2, x_2=6, x_3=2, x_4=0, x_5=0$ | Classic textbook LP ($\min -3x_1 - 5x_2$) |
 | Two-Phase Benchmark (`--demo twophase`) | Two-Phase Simplex | $\min z^* = 17/5$ | $x_1=2/5, x_2=9/5, e_1=1$ | Mixed $=, \ge, \le$ constraints; dual $y^*=(7/5, 0, -1/5)$ |
-| [skills/ilp-solver/examples/gomory_2d.lp](skills/ilp-solver/examples/gomory_2d.lp) | Chvátal-Gomory ILP | $\max z^*_{\text{ILP}} = 12$ | $x_1=3, x_2=2$ | Continuous LP $z_{\text{LP}} = 166/13$ at $(103/26, 21/13)$; 3 cuts |
+| [skills/ilp-solver/examples/gomory_2d.lp](skills/ilp-solver/examples/gomory_2d.lp) | Chvátal-Gomory ILP | $\max z^*_{\text{ILP}} = 12$ | $x_1=3, x_2=2$ | Continuous LP $z_{\text{LP}} = 166/13$ at $(103/26, 21/13)$; 3 CG cuts (or 3 nodes, 2 cuts under B&C) |
+| [skills/ilp-solver/examples/bnb_2d.lp](skills/ilp-solver/examples/bnb_2d.lp) | Branch & Bound / Branch & Cut | $\max z^*_{\text{ILP}} = 40$ | $x_1=0, x_2=5$ | Root $z_{\text{LP}} = 165/4$; 9 nodes under B&B vs. 1 node + 1 CG cut under B&C |
+| [skills/ilp-solver/examples/milp_2d.lp](skills/ilp-solver/examples/milp_2d.lp) | MILP (B&B / GMI B&C) | $\max z^*_{\text{MILP}} = 55/3$ | $x_1=3, x_2=7/3$ | Mixed $x_1 \in \mathbb{Z}, x_2 \in \mathbb{R}_{\ge 0}$; 3 nodes under B&B vs. 1 node + 1 GMI cut under B&C |
 | [skills/ilp-solver/examples/tum_network.lp](skills/ilp-solver/examples/tum_network.lp) | TUM + LP Relaxation | $\max z^*_{\text{ILP}} = 5$ | $x_1=3, x_2=2$ | Verified TUM & Ideal Polyhedron ($P = P_I$); 0 cuts needed |
 
 ---

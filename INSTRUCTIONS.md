@@ -105,26 +105,34 @@ In an AI chat, you can ask:
 
 ---
 
-### Method 4: ILP Cutting Planes, TUM & 2D Visualizer (`skills/ilp-solver/`)
+### Method 4: ILP / MILP Cutting Planes, Branch & Bound, Branch & Cut & 2D Visualizer (`skills/ilp-solver/`)
 
-Analyze Total Unimodularity and solve pure Integer Linear Programs using Chvátal-Gomory cuts and Dual Simplex re-optimization:
+Analyze Total Unimodularity and solve pure or mixed Integer Linear Programs using **Chvátal-Gomory / GMI cuts**, **Branch and Bound**, and **Branch and Cut**:
 
 ```bash
-# 1. Solve the classic 2D non-TUM ILP and create an interactive 2D HTML plot
+# 1. Solve the classic 2D non-TUM ILP with Cutting Planes and 2D HTML plot
 python3 skills/ilp-solver/scripts/solve_ilp.py \
   --lp skills/ilp-solver/examples/gomory_2d.lp \
   --visualize-2d cuts_visualization.html --verify-scipy
 
-# 2. Test Total Unimodularity & Hoffman-Kruskal Ideal Polyhedron detection
-python3 skills/ilp-solver/scripts/solve_ilp.py --example tum --verify-scipy
-
-# 3. Solve an inline ILP directly and export Markdown notes
+# 2. Solve with Branch and Bound (Best-Bound, DFS, or BFS) and 2D tree visualizer
 python3 skills/ilp-solver/scripts/solve_ilp.py \
-  --lp "max 2*x1 + 3*x2 s.t. 2*x1 + 5*x2 <= 16; 6*x1 + 2*x2 <= 27; x1, x2 >= 0" \
-  --output-md ilp_solution.md
+  --example bnb --method branch-and-bound \
+  --visualize-2d bnb_visualization.html --verify-scipy
+
+# 3. Solve with Branch and Cut (combines cutting planes and tree search)
+python3 skills/ilp-solver/scripts/solve_ilp.py \
+  --example bnb --method branch-and-cut --verify-scipy
+
+# 4. Solve a Mixed-Integer LP (integer + continuous variables)
+python3 skills/ilp-solver/scripts/solve_ilp.py \
+  --example milp --method branch-and-cut --verify-scipy
+
+# 5. Test Total Unimodularity & Hoffman-Kruskal Ideal Polyhedron detection
+python3 skills/ilp-solver/scripts/solve_ilp.py --example tum --verify-scipy
 ```
 
-Open `cuts_visualization.html` (or the pre-built [skills/ilp-solver/examples/gomory_2d_viz.html](skills/ilp-solver/examples/gomory_2d_viz.html)) in any browser to step backward and forward through each Chvátal-Gomory hyperplane over the $\mathbb{Z}^2$ integer lattice.
+Open any exported `.html` visualizer (such as [skills/ilp-solver/examples/gomory_2d_viz.html](skills/ilp-solver/examples/gomory_2d_viz.html)) in a browser to inspect every cut, branching hyperplane, sub-polyhedron, and tree node over $\mathbb{Z}^2$.
 
 ---
 
@@ -162,10 +170,11 @@ $$
 - **Two-Phase**: Normalizes $\text{RHS} \ge 0$, introduces artificial variables $y_1, \dots, y_m$, minimizes $W = \sum y_i$ in Phase 1 (reporting `INFEASIBLE` if $W^* > 0$), strips artificials, restores and canonicalizes $-z$, and solves Phase 2.
 - **Dual Simplex**: Requires an initial dual-feasible tableau ($\bar{c}_j \ge 0$). Selects the leaving row with the most negative RHS and applies the dual ratio test $\min_{j: a_{lj} < 0} (\bar{c}_j / |a_{lj}|)$ to restore primal feasibility.
 
-### 4. Total Unimodularity & Chvátal-Gomory Cutting Planes
+### 4. Total Unimodularity, Cutting Planes, Branch & Bound, and Branch & Cut
 
 - **Total Unimodularity (TUM)**: Checks $a_{ij} \in \{-1, 0, 1\}$, bipartite network incidence criteria, Consecutive Ones structure, and exact determinants $\in \{-1, 0, 1\}$. If $A$ is TUM and $b \in \mathbb{Z}^m$, Hoffman-Kruskal guarantees $P = P_I$ and solves directly with zero cuts.
-- **Cutting Planes**: For fractional basic row $x_B + \sum_{j \in N} \bar{a}_{ij} x_j = \bar{b}_i$, derives $\sum_{j \in N} f_j x_j \ge f_0$ (with $f = \cdot - \lfloor \cdot \rfloor$), converts it to original variables, appends $-s_{\text{cut}} + \sum (-f_j) x_j = -f_0$, and re-optimizes via Dual Simplex.
+- **Cutting Planes**: For fractional basic row $x_B + \sum_{j \in N} \bar{a}_{ij} x_j = \bar{b}_i$, derives Chvátal-Gomory ($\sum_{j \in N} f_j x_j \ge f_0$) or Gomory Mixed-Integer (GMI) cuts, converts them to original variables, appends $-s_{\text{cut}} + \sum (-g_j) x_j = -f_0$, and re-optimizes via Dual Simplex.
+- **Branch and Bound / Branch and Cut**: Solves node relaxations via exact Two-Phase Simplex, applies node cuts before branching (in Branch & Cut), prunes subtrees by bound dominance, infeasibility, or integrality, and explores open leaves by Best-Bound, DFS, or BFS.
 
 ---
 
@@ -179,7 +188,7 @@ $$
 ├── LICENSE                   # MIT License
 ├── csv/                      # Initial Simplex CSV datasets (tableau.csv, example_standard.csv)
 ├── skills/
-│   ├── ilp-solver/           # TUM analysis, Chvátal-Gomory cuts & 2D HTML visualizer
+│   ├── ilp-solver/           # TUM analysis, CG/GMI cuts, B&B, B&C & 2D HTML visualizer
 │   └── tableau-solver/       # Simplex, Two-Phase, Dual Simplex, Duality & Shadow Prices
 └── source/
     └── gui.py                # Web GUI server, loopback REST API & CSV CLI runner

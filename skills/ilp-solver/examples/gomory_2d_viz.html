@@ -145,7 +145,6 @@
     </div>
 
     <div class="sidebar">
-      <!-- 1. TUM Analysis Section -->
       <div class="section">
         <div class="section-title">Pre-Solve: Total Unimodularity (TUM) Analysis</div>
         <div class="card-box">
@@ -162,7 +161,6 @@
         </div>
       </div>
 
-      <!-- 2. Step Navigator -->
       <div class="section">
         <div class="section-title">Cutting Plane Stepper</div>
         <div style="display: flex; justify-content: space-between; align-items: center;">
@@ -176,7 +174,6 @@
         </div>
       </div>
 
-      <!-- 3. Current Cut Details -->
       <div class="section" id="cut-info-section">
         <div class="section-title">Current Cut Algebraic Derivation</div>
         <div id="cut-info-body" class="card-box">
@@ -184,7 +181,6 @@
         </div>
       </div>
 
-      <!-- 4. Solution Comparison -->
       <div class="section">
         <div class="section-title">Solution Comparison</div>
         <div class="card-box" style="margin-bottom: 8px;">
@@ -212,9 +208,11 @@
     function toSvgY(y) { return originY - y * scale; }
 
     const polygons = [{"step_name": "Continuous Relaxation (No Cuts)", "poly": [[0.0, 0.0], [4.5, 0.0], [3.96154, 1.61538], [0.0, 3.2]]}, {"step_name": "Cut 1: 3*x1 + 5*x2 <= 19", "poly": [[0.0, 0.0], [4.5, 0.0], [4.04167, 1.375], [3.0, 2.0], [0.0, 3.2]]}, {"step_name": "Cut 2: 6*x1 + 3*x2 <= 28", "poly": [[0.0, 0.0], [4.5, 0.0], [4.16667, 1.0], [3.95238, 1.42857], [3.0, 2.0], [0.0, 3.2]]}, {"step_name": "Cut 3: 4*x1 + 5*x2 <= 22", "poly": [[0.0, 0.0], [4.5, 0.0], [4.16667, 1.0], [4.11111, 1.11111], [3.0, 2.0], [0.0, 3.2]]}];
-    const intPoints = [{"x": 0, "y": 0, "in_initial_poly": true}, {"x": 0, "y": 1, "in_initial_poly": true}, {"x": 0, "y": 2, "in_initial_poly": true}, {"x": 0, "y": 3, "in_initial_poly": true}, {"x": 0, "y": 4, "in_initial_poly": false}, {"x": 0, "y": 5, "in_initial_poly": false}, {"x": 1, "y": 0, "in_initial_poly": true}, {"x": 1, "y": 1, "in_initial_poly": true}, {"x": 1, "y": 2, "in_initial_poly": true}, {"x": 1, "y": 3, "in_initial_poly": false}, {"x": 1, "y": 4, "in_initial_poly": false}, {"x": 1, "y": 5, "in_initial_poly": false}, {"x": 2, "y": 0, "in_initial_poly": true}, {"x": 2, "y": 1, "in_initial_poly": true}, {"x": 2, "y": 2, "in_initial_poly": true}, {"x": 2, "y": 3, "in_initial_poly": false}, {"x": 2, "y": 4, "in_initial_poly": false}, {"x": 2, "y": 5, "in_initial_poly": false}, {"x": 3, "y": 0, "in_initial_poly": true}, {"x": 3, "y": 1, "in_initial_poly": true}, {"x": 3, "y": 2, "in_initial_poly": true}, {"x": 3, "y": 3, "in_initial_poly": false}, {"x": 3, "y": 4, "in_initial_poly": false}, {"x": 3, "y": 5, "in_initial_poly": false}, {"x": 4, "y": 0, "in_initial_poly": true}, {"x": 4, "y": 1, "in_initial_poly": true}, {"x": 4, "y": 2, "in_initial_poly": false}, {"x": 4, "y": 3, "in_initial_poly": false}, {"x": 4, "y": 4, "in_initial_poly": false}, {"x": 4, "y": 5, "in_initial_poly": false}, {"x": 5, "y": 0, "in_initial_poly": false}, {"x": 5, "y": 1, "in_initial_poly": false}, {"x": 5, "y": 2, "in_initial_poly": false}, {"x": 5, "y": 3, "in_initial_poly": false}, {"x": 5, "y": 4, "in_initial_poly": false}, {"x": 5, "y": 5, "in_initial_poly": false}, {"x": 6, "y": 0, "in_initial_poly": false}, {"x": 6, "y": 1, "in_initial_poly": false}, {"x": 6, "y": 2, "in_initial_poly": false}, {"x": 6, "y": 3, "in_initial_poly": false}, {"x": 6, "y": 4, "in_initial_poly": false}, {"x": 6, "y": 5, "in_initial_poly": false}];
-    const cutsData = [{"index": 1, "generating_var": "x1", "formula_slack": "12/13*s1 + 5/26*s2 >= 25/26", "formula_orig": "3*x1 + 5*x2 <= 19", "c1": 3.0, "c2": 5.0, "rhs": 19.0}, {"index": 2, "generating_var": "x2", "formula_slack": "7/8*s2 + 1/4*s_cut1 >= 3/8", "formula_orig": "6*x1 + 3*x2 <= 28", "c1": 6.0, "c2": 3.0, "rhs": 28.0}, {"index": 3, "generating_var": "x1", "formula_slack": "6/7*s_cut1 + 5/21*s_cut2 >= 20/21", "formula_orig": "4*x1 + 5*x2 <= 22", "c1": 4.0, "c2": 5.0, "rhs": 22.0}];
+    const intPoints = [{"x": 0, "y": 0, "in_initial_poly": true}, {"x": 0, "y": 1, "in_initial_poly": true}, {"x": 0, "y": 2, "in_initial_poly": true}, {"x": 0, "y": 3, "in_initial_poly": true}, {"x": 0, "y": 4, "in_initial_poly": false}, {"x": 0, "y": 5, "in_initial_poly": false}, {"x": 0, "y": 6, "in_initial_poly": false}, {"x": 1, "y": 0, "in_initial_poly": true}, {"x": 1, "y": 1, "in_initial_poly": true}, {"x": 1, "y": 2, "in_initial_poly": true}, {"x": 1, "y": 3, "in_initial_poly": false}, {"x": 1, "y": 4, "in_initial_poly": false}, {"x": 1, "y": 5, "in_initial_poly": false}, {"x": 1, "y": 6, "in_initial_poly": false}, {"x": 2, "y": 0, "in_initial_poly": true}, {"x": 2, "y": 1, "in_initial_poly": true}, {"x": 2, "y": 2, "in_initial_poly": true}, {"x": 2, "y": 3, "in_initial_poly": false}, {"x": 2, "y": 4, "in_initial_poly": false}, {"x": 2, "y": 5, "in_initial_poly": false}, {"x": 2, "y": 6, "in_initial_poly": false}, {"x": 3, "y": 0, "in_initial_poly": true}, {"x": 3, "y": 1, "in_initial_poly": true}, {"x": 3, "y": 2, "in_initial_poly": true}, {"x": 3, "y": 3, "in_initial_poly": false}, {"x": 3, "y": 4, "in_initial_poly": false}, {"x": 3, "y": 5, "in_initial_poly": false}, {"x": 3, "y": 6, "in_initial_poly": false}, {"x": 4, "y": 0, "in_initial_poly": true}, {"x": 4, "y": 1, "in_initial_poly": true}, {"x": 4, "y": 2, "in_initial_poly": false}, {"x": 4, "y": 3, "in_initial_poly": false}, {"x": 4, "y": 4, "in_initial_poly": false}, {"x": 4, "y": 5, "in_initial_poly": false}, {"x": 4, "y": 6, "in_initial_poly": false}, {"x": 5, "y": 0, "in_initial_poly": false}, {"x": 5, "y": 1, "in_initial_poly": false}, {"x": 5, "y": 2, "in_initial_poly": false}, {"x": 5, "y": 3, "in_initial_poly": false}, {"x": 5, "y": 4, "in_initial_poly": false}, {"x": 5, "y": 5, "in_initial_poly": false}, {"x": 5, "y": 6, "in_initial_poly": false}, {"x": 6, "y": 0, "in_initial_poly": false}, {"x": 6, "y": 1, "in_initial_poly": false}, {"x": 6, "y": 2, "in_initial_poly": false}, {"x": 6, "y": 3, "in_initial_poly": false}, {"x": 6, "y": 4, "in_initial_poly": false}, {"x": 6, "y": 5, "in_initial_poly": false}, {"x": 6, "y": 6, "in_initial_poly": false}];
+    const mixedSegments = [];
+    const cutsData = [{"index": 1, "kind": "CG", "generating_var": "x1", "formula_slack": "12/13*s1 + 5/26*s2 >= 25/26", "formula_orig": "3*x1 + 5*x2 <= 19", "c1": 3.0, "c2": 5.0, "rhs": 19.0}, {"index": 2, "kind": "CG", "generating_var": "x2", "formula_slack": "7/8*s2 + 1/4*s_cut1 >= 3/8", "formula_orig": "6*x1 + 3*x2 <= 28", "c1": 6.0, "c2": 3.0, "rhs": 28.0}, {"index": 3, "kind": "CG", "generating_var": "x1", "formula_slack": "6/7*s_cut1 + 5/21*s_cut2 >= 20/21", "formula_orig": "4*x1 + 5*x2 <= 22", "c1": 4.0, "c2": 5.0, "rhs": 22.0}];
     const lpOpt = { x: 3.9615384615384617, y: 1.6153846153846154, val: 12.76923076923077 };
+    const hasFinal = true;
     const ilpOpt = { x: 3.0, y: 2.0, val: 12.0 };
 
     let currentStep = 0;
@@ -223,7 +221,6 @@
       const svg = document.getElementById('plot-svg');
       let html = '';
 
-      // Grid lines
       for (let i = 0; i <= maxCoord; i++) {
         const sx = toSvgX(i);
         const sy = toSvgY(i);
@@ -233,24 +230,28 @@
         html += `<text x="${originX - 12}" y="${sy + 4}" fill="#64748b" font-size="11" text-anchor="end">${i}</text>`;
       }
 
-      // Axes
       html += `<line x1="${toSvgX(0)}" y1="${originY}" x2="${toSvgX(maxCoord)}" y2="${originY}" stroke="#94a3b8" stroke-width="2" />`;
       html += `<line x1="${originX}" y1="${toSvgY(0)}" x2="${originX}" y2="${toSvgY(maxCoord)}" stroke="#94a3b8" stroke-width="2" />`;
-      html += `<text x="${toSvgX(maxCoord) + 12}" y="${originY + 4}" fill="#94a3b8" font-size="13" font-weight="bold">$x1</text>`;
-      html += `<text x="${originX}" y="${toSvgY(maxCoord) - 12}" fill="#94a3b8" font-size="13" font-weight="bold" text-anchor="middle">$x2</text>`;
+      html += `<text x="${toSvgX(maxCoord) + 12}" y="${originY + 4}" fill="#94a3b8" font-size="13" font-weight="bold">x1</text>`;
+      html += `<text x="${originX}" y="${toSvgY(maxCoord) - 12}" fill="#94a3b8" font-size="13" font-weight="bold" text-anchor="middle">x2</text>`;
 
-      // Initial continuous polygon (ghost outline)
-      const initPts = polygons[0].poly.map(p => `${toSvgX(p[0])},${toSvgY(p[1])}`).join(' ');
-      html += `<polygon points="${initPts}" fill="rgba(37, 99, 235, 0.08)" stroke="#3b82f6" stroke-dasharray="4,4" stroke-width="1.5" />`;
+      if (polygons[0].poly.length >= 3) {
+        const initPts = polygons[0].poly.map(p => `${toSvgX(p[0])},${toSvgY(p[1])}`).join(' ');
+        html += `<polygon points="${initPts}" fill="rgba(37, 99, 235, 0.08)" stroke="#3b82f6" stroke-dasharray="4,4" stroke-width="1.5" />`;
+      }
 
-      // Current Step Polygon
-      const curPts = polygons[currentStep].poly.map(p => `${toSvgX(p[0])},${toSvgY(p[1])}`).join(' ');
-      html += `<polygon points="${curPts}" fill="rgba(56, 189, 248, 0.22)" stroke="#38bdf8" stroke-width="2.5" />`;
+      const cur = polygons[currentStep].poly;
+      if (cur.length >= 3) {
+        const curPts = cur.map(p => `${toSvgX(p[0])},${toSvgY(p[1])}`).join(' ');
+        html += `<polygon points="${curPts}" fill="rgba(56, 189, 248, 0.22)" stroke="#38bdf8" stroke-width="2.5" />`;
+      } else if (cur.length === 2) {
+        html += `<line x1="${toSvgX(cur[0][0])}" y1="${toSvgY(cur[0][1])}" x2="${toSvgX(cur[1][0])}" y2="${toSvgY(cur[1][1])}" stroke="#38bdf8" stroke-width="3.5" />`;
+      } else if (cur.length === 1) {
+        html += `<circle cx="${toSvgX(cur[0][0])}" cy="${toSvgY(cur[0][1])}" r="5" fill="#38bdf8" />`;
+      }
 
-      // Draw all cuts up to currentStep
       for (let c = 0; c < currentStep; c++) {
         const cut = cutsData[c];
-        // Line: c1*x + c2*y = rhs
         let p1, p2;
         if (Math.abs(cut.c2) > 1e-6) {
           p1 = { x: 0, y: cut.rhs / cut.c2 };
@@ -260,7 +261,6 @@
           p2 = { x: cut.rhs / cut.c1, y: maxCoord };
         }
         html += `<line x1="${toSvgX(p1.x)}" y1="${toSvgY(p1.y)}" x2="${toSvgX(p2.x)}" y2="${toSvgY(p2.y)}" stroke="#f59e0b" stroke-width="2.5" />`;
-        // Label on line
         const midX = (p1.x + p2.x) / 2;
         const midY = (p1.y + p2.y) / 2;
         if (midX >= 0 && midX <= maxCoord && midY >= 0 && midY <= maxCoord) {
@@ -268,7 +268,10 @@
         }
       }
 
-      // Integer grid points
+      mixedSegments.forEach(seg => {
+        html += `<line x1="${toSvgX(seg.x1)}" y1="${toSvgY(seg.y1)}" x2="${toSvgX(seg.x2)}" y2="${toSvgY(seg.y2)}" stroke="#38bdf8" stroke-width="2" opacity="0.65" />`;
+      });
+
       intPoints.forEach(pt => {
         const isFeas = pt.in_initial_poly;
         const fill = isFeas ? '#38bdf8' : '#475569';
@@ -276,12 +279,10 @@
         html += `<circle cx="${toSvgX(pt.x)}" cy="${toSvgY(pt.y)}" r="${r}" fill="${fill}" opacity="${isFeas ? 1 : 0.4}" />`;
       });
 
-      // LP Continuous Optimum
       html += `<circle cx="${toSvgX(lpOpt.x)}" cy="${toSvgY(lpOpt.y)}" r="6" fill="#ef4444" stroke="#ffffff" stroke-width="2" />`;
       html += `<text x="${toSvgX(lpOpt.x) + 8}" y="${toSvgY(lpOpt.y) - 8}" fill="#f87171" font-size="12" font-weight="bold">x*_LP (${lpOpt.x.toFixed(2)}, ${lpOpt.y.toFixed(2)})</text>`;
 
-      // If at last step or optimal integer reached, highlight integer optimum
-      if (currentStep === cutsData.length) {
+      if (hasFinal && currentStep === cutsData.length) {
         html += `<circle cx="${toSvgX(ilpOpt.x)}" cy="${toSvgY(ilpOpt.y)}" r="7" fill="#22c55e" stroke="#ffffff" stroke-width="2.5" />`;
         html += `<text x="${toSvgX(ilpOpt.x) + 8}" y="${toSvgY(ilpOpt.y) + 16}" fill="#4ade80" font-size="12" font-weight="bold">x*_ILP (${ilpOpt.x}, ${ilpOpt.y})</text>`;
       }
@@ -300,45 +301,29 @@
         document.getElementById('step-label').textContent = "Continuous LP Relaxation";
         document.getElementById('cut-info-body').innerHTML = `
           <div><strong>Base Problem:</strong> Continuous relaxation solved to optimality via Simplex.</div>
-          <div style="margin-top: 6px;">Continuous optimum is fractional: <code>x1 = ${lpOpt.x.toFixed(3)}, x2 = ${lpOpt.y.toFixed(3)}</code>.</div>
-          <div style="color: var(--amber); margin-top: 6px;">Chvátal-Gomory cuts are required to slice off the non-integer optimum while preserving all lattice points Z^2.</div>
+          <div style="margin-top: 6px;">Continuous optimum: <code>x1 = ${lpOpt.x.toFixed(3)}, x2 = ${lpOpt.y.toFixed(3)}</code>.</div>
+          <div style="color: var(--amber); margin-top: 6px;">Chvátal-Gomory cuts slice off fractional solutions while preserving all feasible integer points.</div>
         `;
       } else {
         const cut = cutsData[currentStep - 1];
-        document.getElementById('step-label').textContent = `Cut ${cut.index} Applied`;
+        document.getElementById('step-label').textContent = `${cut.kind} Cut ${cut.index} Applied`;
         document.getElementById('cut-info-body').innerHTML = `
-          <div><strong>Generating Variable:</strong> <code>${cut.generating_var}</code></div>
+          <div><strong>Generating Variable:</strong> <code>${cut.generating_var}</code> (${cut.kind})</div>
           <div style="margin-top: 6px;"><strong>Tableau Slack Form:</strong></div>
           <div class="code-box">${cut.formula_slack}</div>
           <div style="margin-top: 6px;"><strong>Original Decision Variables Form:</strong></div>
           <div class="code-box" style="color: #4ade80;">${cut.formula_orig}</div>
           <div style="margin-top: 6px; font-size: 12px; color: var(--text-muted);">
-            Notice how the yellow cut hyperplane strictly separates the fractional point x*_LP without eliminating any blue integer lattice points!
+            The yellow hyperplane separates the fractional relaxation point without eliminating any integer feasible points.
           </div>
         `;
       }
     }
 
-    function nextStep() {
-      if (currentStep < cutsData.length) {
-        currentStep++;
-        renderPlot();
-      }
-    }
+    function nextStep() { if (currentStep < cutsData.length) { currentStep++; renderPlot(); } }
+    function prevStep() { if (currentStep > 0) { currentStep--; renderPlot(); } }
+    function resetStep() { currentStep = 0; renderPlot(); }
 
-    function prevStep() {
-      if (currentStep > 0) {
-        currentStep--;
-        renderPlot();
-      }
-    }
-
-    function resetStep() {
-      currentStep = 0;
-      renderPlot();
-    }
-
-    // Initial render
     renderPlot();
   </script>
 </body>
